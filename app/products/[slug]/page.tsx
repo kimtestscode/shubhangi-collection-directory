@@ -3,6 +3,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
 import { Product } from '@/lib/types';
 import Header from '@/components/shared/Header';
 import Footer from '@/components/shared/Footer';

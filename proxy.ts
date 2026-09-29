@@ -16,6 +16,15 @@ export function proxy(request: NextRequest) {
     }
   }
 
+  // If already logged in and visiting /admin/login, redirect to /admin
+  if (pathname === '/admin/login') {
+    const adminToken = request.cookies.get('admin_token')?.value;
+    const secret = process.env.ADMIN_SECRET;
+    if (adminToken && adminToken === secret) {
+      return NextResponse.redirect(new URL('/admin', request.url));
+    }
+  }
+
   return NextResponse.next();
 }
 

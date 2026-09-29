@@ -25,7 +25,7 @@ function LoginForm() {
     });
 
     if (res.ok) {
-      router.push(from);
+      window.location.href = from;
     } else {
       setError('Incorrect password. Please try again.');
       setLoading(false);

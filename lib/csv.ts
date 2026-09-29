@@ -1,4 +1,4 @@
-import { Product, ProductInsert, ProductType, Availability } from './types';
+import { Product, ProductInsert, Availability } from './types';
 import { slugify } from './utils';
 
 const CSV_HEADERS = [
@@ -85,7 +85,7 @@ export function parseCSVToProducts(csvText: string): Partial<ProductInsert>[] {
 
     const category = getCol(row, ['category']) || 'Other';
     const rawSlug = getCol(row, ['slug']) || slugify(name);
-    const productType = (getCol(row, ['product type', 'type']) || 'simple').toLowerCase() as ProductType;
+    const productType = (getCol(row, ['product type', 'type']) || 'simple').toLowerCase() as Product['product_type'];
     const parentSku = getCol(row, ['parent sku', 'parent_sku']) || null;
     const color = getCol(row, ['color', 'variation color']) || null;
 
@@ -118,6 +118,10 @@ export function parseCSVToProducts(csvText: string): Partial<ProductInsert>[] {
       product_type: productType,
       parent_sku: parentSku ? parentSku.toUpperCase() : null,
       color: color || null,
+      variant_type: null,
+      has_variants: false,
+      option_types: null,
+      variants: null,
       price,
       regular_price: regularPrice,
       currency,
@@ -179,10 +183,16 @@ export function generateSampleCSV(): string {
       name: 'Royal Meenakari Choker Set',
       slug: 'royal-meenakari-choker-set',
       category: 'Necklaces',
-      product_type: 'variable',
+      product_type: 'simple',
       parent_sku: null,
       color: null,
       variant_type: null,
+      has_variants: true,
+      option_types: [{ type: 'Color', values: ['Ruby Red', 'Emerald Green'] }],
+      variants: [
+        { name: 'Ruby Red', sku: 'SC-NK-002-RUB', barcode: '', price_override: 3499, stock: 5, image: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800' },
+        { name: 'Emerald Green', sku: 'SC-NK-002-EME', barcode: '', price_override: 3499, stock: 3, image: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800' },
+      ],
       regular_price: 4999,
       price: 3499,
       currency: 'INR',
@@ -195,48 +205,6 @@ export function generateSampleCSV(): string {
       updated_at: ''
     },
     {
-      id: '2',
-      sku: 'SC-NK-002-RED',
-      name: 'Royal Meenakari Choker Set - Ruby Red',
-      slug: 'royal-meenakari-choker-set-ruby-red',
-      category: 'Necklaces',
-      product_type: 'variation',
-      parent_sku: 'SC-NK-002',
-      color: 'Ruby Red',
-      variant_type: 'Color',
-      regular_price: 4999,
-      price: 3499,
-      currency: 'INR',
-      availability: 'available',
-      featured: false,
-      thumbnail: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800',
-      images: ['https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800'],
-      description: 'Ruby Red variation of Royal Meenakari Choker Set.',
-      created_at: '',
-      updated_at: ''
-    },
-    {
-      id: '3',
-      sku: 'SC-NK-002-GRN',
-      name: 'Royal Meenakari Choker Set - Emerald Green',
-      slug: 'royal-meenakari-choker-set-emerald-green',
-      category: 'Necklaces',
-      product_type: 'variation',
-      parent_sku: 'SC-NK-002',
-      color: 'Emerald Green',
-      variant_type: 'Color',
-      regular_price: 4999,
-      price: 3499,
-      currency: 'INR',
-      availability: 'available',
-      featured: false,
-      thumbnail: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800',
-      images: ['https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800'],
-      description: 'Emerald Green variation of Royal Meenakari Choker Set.',
-      created_at: '',
-      updated_at: ''
-    },
-    {
       id: '4',
       sku: 'SC-BN-005',
       name: 'Kundan Brass Bangles',
@@ -244,8 +212,11 @@ export function generateSampleCSV(): string {
       category: 'Bangles',
       product_type: 'simple',
       parent_sku: null,
-      color: 'Gold',
+      color: null,
       variant_type: null,
+      has_variants: false,
+      option_types: null,
+      variants: null,
       regular_price: 1999,
       price: 1499,
       currency: 'INR',

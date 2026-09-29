@@ -1,6 +1,22 @@
 export type Availability = 'available' | 'out_of_stock' | 'coming_soon' | 'hidden';
 export type ProductType = 'simple' | 'variable' | 'variation';
 
+/** A single inline variant row stored as JSONB on the product */
+export interface InlineVariant {
+  name: string;           // e.g. "Round Floral" or "Red / Small"
+  sku: string;
+  barcode: string;
+  price_override: number | null;
+  stock: number;
+  image: string;          // single image URL for this variant
+}
+
+/** An option type definition, e.g. { type: "Pattern", values: ["Round Floral", "Peacock"] } */
+export interface OptionType {
+  type: string;           // e.g. "Color", "Size", "Pattern"
+  values: string[];       // e.g. ["Round Floral", "Peacock"]
+}
+
 export interface Product {
   id: string;
   sku: string;
@@ -8,21 +24,22 @@ export interface Product {
   slug: string;
   category: string;
   description: string | null;
-  price: number | null; // Sale / Offer price
-  regular_price?: number | null; // Regular MRP price
+  price: number | null;
+  regular_price?: number | null;
   currency: string;
   availability: Availability;
   images: string[];
   thumbnail: string | null;
   featured: boolean;
+  // --- Old variant system (kept for backward compat) ---
   product_type: ProductType;
   parent_sku: string | null;
-  // variant_type: the dimension of variation (e.g. "Color", "Size", "Material", "Design")
-  // stored in the `color` column until DB migration adds `variant_type`
+  color: string | null;
   variant_type: string | null;
-  // variant_value: the actual value (e.g. "Red", "XL", "Gold-plated")
-  // stored in the `color` column for now — after migration, separate column
-  color: string | null; // kept for backward compat; = variant_value
+  // --- New inline variant system ---
+  has_variants: boolean;
+  option_types: OptionType[] | null;
+  variants: InlineVariant[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -44,14 +61,12 @@ export interface ProductFilters {
   availability?: Availability | 'all';
 }
 
-/** A single variant as returned for the switcher on product detail page */
+/** Legacy variant (from old parent/variation system) — used for backward compat on product page */
 export interface ProductVariant {
   sku: string;
   name: string;
   slug: string;
-  /** Variant display label (e.g. "Red", "XL") */
   variantValue: string;
-  /** Images for this specific variant */
   images: string[];
   thumbnail: string | null;
   isCurrent: boolean;

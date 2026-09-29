@@ -1,4 +1,4 @@
--- Shubhangi Collection - Database Schema (with Color Variations & CSV support)
+-- Shubhangi Collection - Database Schema (with Flexible Variant System)
 
 CREATE TABLE IF NOT EXISTS products (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS products (
   featured     BOOLEAN DEFAULT false,
   product_type TEXT DEFAULT 'simple' CHECK (product_type IN ('simple', 'variable', 'variation')),
   parent_sku   TEXT,
-  color        TEXT,
+  color        TEXT,      -- stores the variant_value (e.g. "Red", "XL", "Gold")
+  variant_type TEXT,      -- stores the type of variant (e.g. "Color", "Size", "Material")
   created_at   TIMESTAMPTZ DEFAULT NOW(),
   updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -24,6 +25,8 @@ CREATE TABLE IF NOT EXISTS products (
 ALTER TABLE products ADD COLUMN IF NOT EXISTS product_type TEXT DEFAULT 'simple';
 ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_sku TEXT;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS color TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS variant_type TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS regular_price DECIMAL(10,2);
 
 -- Auto-update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

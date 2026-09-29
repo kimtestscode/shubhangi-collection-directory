@@ -17,7 +17,12 @@ export interface Product {
   featured: boolean;
   product_type: ProductType;
   parent_sku: string | null;
-  color: string | null;
+  // variant_type: the dimension of variation (e.g. "Color", "Size", "Material", "Design")
+  // stored in the `color` column until DB migration adds `variant_type`
+  variant_type: string | null;
+  // variant_value: the actual value (e.g. "Red", "XL", "Gold-plated")
+  // stored in the `color` column for now — after migration, separate column
+  color: string | null; // kept for backward compat; = variant_value
   created_at: string;
   updated_at: string;
 }
@@ -37,4 +42,20 @@ export interface ProductFilters {
   search?: string;
   category?: string;
   availability?: Availability | 'all';
+}
+
+/** A single variant as returned for the switcher on product detail page */
+export interface ProductVariant {
+  sku: string;
+  name: string;
+  slug: string;
+  /** Variant display label (e.g. "Red", "XL") */
+  variantValue: string;
+  /** Images for this specific variant */
+  images: string[];
+  thumbnail: string | null;
+  isCurrent: boolean;
+  availability: Availability;
+  price: number | null;
+  regular_price: number | null;
 }

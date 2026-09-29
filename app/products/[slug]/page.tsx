@@ -5,15 +5,11 @@ import { ArrowLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export const dynamic = 'force-dynamic';
-import { Product } from '@/lib/types';
+import { Product, ProductVariant } from '@/lib/types';
 import Header from '@/components/shared/Header';
 import Footer from '@/components/shared/Footer';
-import AvailabilityBadge from '@/components/shared/AvailabilityBadge';
-import WhatsAppButton from '@/components/shared/WhatsAppButton';
-import ProductGallery from '@/components/product/ProductGallery';
 import RelatedProducts from '@/components/product/RelatedProducts';
-import ColorSelector from '@/components/product/ColorSelector';
-import PriceDisplay from '@/components/shared/PriceDisplay';
+import ProductDetailClient from '@/components/product/ProductDetailClient';
 import CopyButton from './CopyButton';
 
 interface Props {
@@ -30,26 +26,53 @@ async function getProduct(slug: string): Promise<Product | null> {
   return data;
 }
 
-async function getVariations(product: Product) {
-  const targetParentSku = product.product_type === 'variation' ? product.parent_sku : product.sku;
-  if (!targetParentSku) return [];
+/**
+ * Fetch all variants for this product group.
+ * A product group = parent + all its children (product_type = 'variation').
+ * We return each variant with its own images so the switcher can show them inline.
+ */
+async function getVariants(product: Product): Promise<{ variants: ProductVariant[]; variantType: string | null }> {
+  // Determine the parent SKU
+  const parentSku = product.product_type === 'variation'
+    ? product.parent_sku
+    : product.product_type === 'variable'
+      ? product.sku
+      : null;
 
+  if (!parentSku) return { variants: [], variantType: null };
+
+  // Fetch all products that are part of this group (parent + all variations)
   const { data } = await supabase
     .from('products')
-    .select('sku, name, slug, color')
-    .or(`sku.eq.${targetParentSku},parent_sku.eq.${targetParentSku}`)
-    .neq('availability', 'hidden');
+    .select('sku, name, slug, color, images, thumbnail, availability, price, regular_price, product_type, variant_type')
+    .or(`sku.eq.${parentSku},parent_sku.eq.${parentSku}`)
+    .neq('availability', 'hidden')
+    .order('created_at', { ascending: true });
 
-  if (!data) return [];
+  if (!data) return { variants: [], variantType: null };
 
-  return data
-    .filter(p => p.color)
-    .map(p => ({
-      color: p.color!,
-      slug: p.slug,
-      sku: p.sku,
-      isCurrent: p.slug === product.slug,
-    }));
+  // Only include variation children (not the parent variable product itself)
+  const variationRows = data.filter(p => p.product_type === 'variation' && p.color);
+
+  if (variationRows.length === 0) return { variants: [], variantType: null };
+
+  // Determine variant type (use first variant's variant_type, fallback to 'Color')
+  const variantType = variationRows[0]?.variant_type || 'Color';
+
+  const variants: ProductVariant[] = variationRows.map(p => ({
+    sku: p.sku,
+    name: p.name,
+    slug: p.slug,
+    variantValue: p.color!,
+    images: p.images || [],
+    thumbnail: p.thumbnail,
+    isCurrent: p.slug === product.slug,
+    availability: p.availability,
+    price: p.price,
+    regular_price: p.regular_price,
+  }));
+
+  return { variants, variantType };
 }
 
 async function getRelated(category: string, currentId: string): Promise<Product[]> {
@@ -83,7 +106,7 @@ export default async function ProductDetailPage({ params }: Props) {
   const product = await getProduct(slug);
   if (!product) notFound();
 
-  const variations = await getVariations(product);
+  const { variants, variantType } = await getVariants(product);
   const related = await getRelated(product.category, product.id);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
   const productUrl = `${siteUrl}/products/${product.slug}`;
@@ -100,62 +123,15 @@ export default async function ProductDetailPage({ params }: Props) {
           Back to Catalogue
         </Link>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          <ProductGallery images={product.images} productName={product.name} />
+        {/* Client component handles all variant switching state */}
+        <ProductDetailClient
+          product={product}
+          variants={variants}
+          variantType={variantType}
+        />
 
-          <div className="flex flex-col gap-5">
-            <div>
-              <p className="text-xs tracking-[0.25em] uppercase text-gold font-medium mb-2">
-                {product.category}
-              </p>
-              <h1 className="font-serif text-3xl sm:text-4xl font-semibold text-charcoal leading-tight mb-3">
-                {product.name}
-              </h1>
-              <div className="flex items-center gap-3 flex-wrap">
-                <AvailabilityBadge status={product.availability} />
-                <span className="text-xs text-charcoal-light">
-                  SKU: <span className="font-mono font-medium">{product.sku}</span>
-                </span>
-                {product.color && (
-                  <span className="text-xs font-medium text-charcoal bg-ivory-dark px-2.5 py-0.5 rounded border border-border-warm">
-                    Color: {product.color}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* Price Display with Slash format */}
-            <div className="border-y border-border-warm py-4">
-              <PriceDisplay
-                price={product.price}
-                regularPrice={product.regular_price}
-                currency={product.currency}
-                size="lg"
-              />
-              {product.price === null && (!product.regular_price) && (
-                <p className="text-xs text-charcoal-light mt-1">
-                  Contact us on WhatsApp for pricing.
-                </p>
-              )}
-            </div>
-
-            {/* Color Swatches */}
-            <ColorSelector variations={variations} />
-
-            {product.description && (
-              <p className="text-charcoal-light leading-relaxed text-sm">{product.description}</p>
-            )}
-
-            <div className="space-y-3 pt-2">
-              <WhatsAppButton product={product} variant="detail" />
-              <CopyButton url={productUrl} />
-            </div>
-
-            <div className="bg-ivory-dark rounded-xl p-4 text-xs text-charcoal-light space-y-1 border border-border-warm">
-              <p>WhatsApp us to check current availability and delivery options.</p>
-              <p>All jewellery is carefully packaged for safe delivery.</p>
-            </div>
-          </div>
+        <div className="mt-6 flex justify-start">
+          <CopyButton url={productUrl} />
         </div>
 
         <RelatedProducts products={related} />

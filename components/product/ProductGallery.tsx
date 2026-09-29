@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { ChevronLeft, ChevronRight, ZoomIn } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, X } from 'lucide-react';
 
 interface Props {
   images: string[];
@@ -11,6 +11,11 @@ interface Props {
 export default function ProductGallery({ images, productName }: Props) {
   const [active, setActive] = useState(0);
   const [lightbox, setLightbox] = useState(false);
+
+  // Reset to first image whenever images list changes (variant switched)
+  useEffect(() => {
+    setActive(0);
+  }, [images]);
 
   const safeImages = images.length > 0 ? images : ['/placeholder.jpg'];
 
@@ -26,10 +31,11 @@ export default function ProductGallery({ images, productName }: Props) {
           onClick={() => setLightbox(true)}
         >
           <Image
+            key={safeImages[active]} // key forces re-render/fade on switch
             src={safeImages[active]}
             alt={`${productName} — image ${active + 1}`}
             fill
-            className="object-cover transition-transform duration-500 group-hover:scale-105"
+            className="object-cover transition-all duration-500 group-hover:scale-105"
             sizes="(max-width: 768px) 100vw, 50vw"
             priority
           />
@@ -52,6 +58,16 @@ export default function ProductGallery({ images, productName }: Props) {
               >
                 <ChevronRight className="w-4 h-4 text-charcoal" />
               </button>
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+                {safeImages.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => { e.stopPropagation(); setActive(i); }}
+                    className={`w-1.5 h-1.5 rounded-full transition-all ${i === active ? 'bg-white scale-125' : 'bg-white/50 hover:bg-white/80'}`}
+                    aria-label={`Go to image ${i + 1}`}
+                  />
+                ))}
+              </div>
             </>
           )}
         </div>
@@ -61,10 +77,10 @@ export default function ProductGallery({ images, productName }: Props) {
           <div className="flex gap-2 overflow-x-auto pb-1">
             {safeImages.map((img, i) => (
               <button
-                key={i}
+                key={`${img}-${i}`}
                 onClick={() => setActive(i)}
-                className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
-                  i === active ? 'border-gold' : 'border-border-warm hover:border-gold/50'
+                className={`relative flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${
+                  i === active ? 'border-gold shadow-sm scale-105' : 'border-border-warm hover:border-gold/50'
                 }`}
                 aria-label={`View image ${i + 1}`}
               >
@@ -89,12 +105,30 @@ export default function ProductGallery({ images, productName }: Props) {
               height={800}
               className="object-contain max-h-[85vh] w-full rounded-xl"
             />
+            {safeImages.length > 1 && (
+              <>
+                <button
+                  onClick={(e) => { e.stopPropagation(); prev(); }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/25 text-white rounded-full p-2 transition-colors"
+                  aria-label="Previous"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); next(); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/10 hover:bg-white/25 text-white rounded-full p-2 transition-colors"
+                  aria-label="Next"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </>
+            )}
             <button
               onClick={() => setLightbox(false)}
               className="absolute top-2 right-2 bg-white/10 hover:bg-white/20 text-white rounded-full p-2 transition-colors"
               aria-label="Close"
             >
-              X
+              <X className="w-4 h-4" />
             </button>
           </div>
         </div>

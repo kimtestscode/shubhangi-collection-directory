@@ -1,10 +1,10 @@
 'use client';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { 
   Plus, Edit, Trash2, AlertCircle, Download, Upload, SlidersHorizontal, 
-  Save, X, Check, Loader2, CheckSquare, Square, ChevronDown, ChevronRight, Layers
+  Save, X, Check, Loader2, CheckSquare, Square, ChevronDown, ChevronRight, Layers, ImagePlus
 } from 'lucide-react';
 import { Product, ProductType, Availability, CategoryItem, InlineVariant } from '@/lib/types';
 import { exportProductsToCSV } from '@/lib/csv';
@@ -12,6 +12,14 @@ import { CATEGORIES } from '@/lib/utils';
 import AvailabilityBadge from '@/components/shared/AvailabilityBadge';
 import CSVImportModal from '@/components/admin/CSVImportModal';
 import PriceDisplay from '@/components/shared/PriceDisplay';
+
+async function uploadFile(file: File): Promise<string | null> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/upload', { method: 'POST', body: fd });
+  const data = await res.json();
+  return data.url || null;
+}
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -28,6 +36,9 @@ export default function AdminProductsPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [bulkAction, setBulkAction] = useState('');
+  const [uploadingVariantKey, setUploadingVariantKey] = useState<string | null>(null);
+
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = () => {
     fetch('/api/products?all=1')
@@ -152,6 +163,89 @@ export default function AdminProductsPage() {
         },
       };
     });
+  };
+
+  // Add a new variant row to product
+  const handleAddVariant = (productId: string) => {
+    setEditedProducts((prev) => {
+      const prod = prev[productId];
+      if (!prod) return prev;
+      const currentVariants = Array.isArray(prod.variants) ? prod.variants : [];
+      const count = currentVariants.length + 1;
+      const baseSku = (prod.sku || 'SKU').toUpperCase();
+
+      const newVariant: InlineVariant = {
+        name: `Option ${count}`,
+        option_values: { Option: `Option ${count}` },
+        sku: `${baseSku}-VAR${count}`,
+        barcode: '',
+        price_override: null,
+        stock: 0,
+        images: [],
+        image: '',
+        is_active: true,
+      };
+
+      return {
+        ...prev,
+        [productId]: {
+          ...prod,
+          has_variants: true,
+          product_type: 'variable',
+          variants: [...currentVariants, newVariant],
+        },
+      };
+    });
+
+    // Make sure panel is open
+    setExpandedVariantIds((prev) => new Set(prev).add(productId));
+  };
+
+  // Remove a variant row from product
+  const handleRemoveVariant = (productId: string, variantIdx: number) => {
+    setEditedProducts((prev) => {
+      const prod = prev[productId];
+      if (!prod || !Array.isArray(prod.variants)) return prev;
+      const updatedVariants = prod.variants.filter((_, i) => i !== variantIdx);
+      return {
+        ...prev,
+        [productId]: {
+          ...prod,
+          variants: updatedVariants,
+        },
+      };
+    });
+  };
+
+  // Upload an image for a variant
+  const handleVariantImageUpload = async (productId: string, variantIdx: number, file: File) => {
+    const key = `${productId}-${variantIdx}`;
+    setUploadingVariantKey(key);
+    const url = await uploadFile(file);
+    if (url) {
+      setEditedProducts((prev) => {
+        const prod = prev[productId];
+        if (!prod || !Array.isArray(prod.variants)) return prev;
+        const updatedVariants = prod.variants.map((v, i) => {
+          if (i !== variantIdx) return v;
+          const currentImgs = Array.isArray(v.images) ? v.images : [];
+          const updatedImgs = [...currentImgs, url].slice(0, 3);
+          return {
+            ...v,
+            images: updatedImgs,
+            image: updatedImgs[0] || url,
+          };
+        });
+        return {
+          ...prev,
+          [productId]: {
+            ...prod,
+            variants: updatedVariants,
+          },
+        };
+      });
+    }
+    setUploadingVariantKey(null);
   };
 
   const toggleExpandVariants = (id: string) => {
@@ -436,7 +530,7 @@ export default function AdminProductsPage() {
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[220px]">Product Name</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[130px]">SKU</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[140px]">Category</th>
-                <th className="px-4 py-3 text-charcoal-light font-medium min-w-[160px]">Type / Variants</th>
+                <th className="px-4 py-3 text-charcoal-light font-medium min-w-[170px]">Type / Variants</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[120px]">MRP (₹)</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[120px]">Offer Price (₹)</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[140px]">Availability</th>
@@ -478,23 +572,36 @@ export default function AdminProductsPage() {
                     {/* Name */}
                     <td className="px-4 py-3 align-top">
                       {isBulkEditMode ? (
-                        <div className="space-y-1">
+                        <div className="space-y-1.5">
                           <input
                             type="text"
                             value={ed.name}
                             onChange={(e) => handleCellChange(p.id, 'name', e.target.value)}
                             className="w-full border border-border-warm focus:border-gold rounded-lg px-2.5 py-1.5 text-xs text-charcoal bg-white font-medium"
                           />
-                          {isVariable && variantList.length > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => toggleExpandVariants(p.id)}
-                              className="flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200/80 px-2 py-0.5 rounded transition-colors"
-                            >
-                              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                              <span>{isExpanded ? 'Collapse Variants' : `Edit ${variantList.length} Variants`}</span>
-                            </button>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {isVariable ? (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandVariants(p.id)}
+                                className="flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200/80 px-2 py-0.5 rounded transition-colors"
+                              >
+                                {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                <span>{isExpanded ? 'Collapse' : `Edit ${variantList.length} Variants`}</span>
+                              </button>
+                            ) : null}
+
+                            {isVariable && (
+                              <button
+                                type="button"
+                                onClick={() => handleAddVariant(p.id)}
+                                className="flex items-center gap-0.5 text-[11px] font-semibold text-gold hover:text-gold/80 hover:underline"
+                              >
+                                <Plus className="w-3 h-3" />
+                                Add Variant
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className="flex items-center gap-3">
@@ -507,15 +614,17 @@ export default function AdminProductsPage() {
                             <Link href={`/products/${p.slug}`} target="_blank" className="font-medium text-charcoal text-xs sm:text-sm hover:text-gold transition-colors">
                               {p.name}
                             </Link>
-                            {isVariable && variantList.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => toggleExpandVariants(p.id)}
-                                className="flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 font-medium mt-0.5"
-                              >
-                                {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                                <span>{variantList.length} variants</span>
-                              </button>
+                            {isVariable && (
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleExpandVariants(p.id)}
+                                  className="flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 font-medium"
+                                >
+                                  {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                  <span>{variantList.length} variants</span>
+                                </button>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -565,13 +674,14 @@ export default function AdminProductsPage() {
                             <option value="simple">Simple</option>
                             <option value="variable">Variable</option>
                           </select>
-                          {isVariable && variantList.length > 0 && (
+                          {isVariable && (
                             <button
                               type="button"
-                              onClick={() => toggleExpandVariants(p.id)}
-                              className="text-[11px] text-amber-800 underline font-medium block"
+                              onClick={() => handleAddVariant(p.id)}
+                              className="text-[11px] text-amber-800 hover:underline font-semibold flex items-center gap-1"
                             >
-                              {isExpanded ? 'Hide variant rows' : `Show ${variantList.length} variant rows`}
+                              <Plus className="w-3 h-3" />
+                              Add new variant
                             </button>
                           )}
                         </div>
@@ -585,7 +695,7 @@ export default function AdminProductsPage() {
                             }`}>
                               {isVariable ? 'Variable' : 'Simple'}
                             </span>
-                            {isVariable && variantList.length > 0 && (
+                            {isVariable && (
                               <span className="text-[11px] text-charcoal-light font-medium">
                                 ({variantList.length})
                               </span>
@@ -698,11 +808,12 @@ export default function AdminProductsPage() {
       {Array.from(expandedVariantIds).map((prodId) => {
         const p = products.find(prod => prod.id === prodId);
         const ed = editedProducts[prodId] || p;
-        if (!ed || !Array.isArray(ed.variants) || ed.variants.length === 0) return null;
+        if (!ed) return null;
+        const variantList: InlineVariant[] = Array.isArray(ed.variants) ? ed.variants : [];
 
         return (
-          <div key={`variants-panel-${prodId}`} className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3 shadow-xs">
-            <div className="flex items-center justify-between">
+          <div key={`variants-panel-${prodId}`} className="bg-amber-50/70 border border-amber-300 rounded-2xl p-4 space-y-3 shadow-sm">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Layers className="w-4 h-4 text-amber-700" />
                 <h3 className="text-sm font-semibold text-charcoal">
@@ -711,131 +822,230 @@ export default function AdminProductsPage() {
                 <span className="text-xs text-charcoal-light font-mono font-normal">
                   (Base SKU: {ed.sku})
                 </span>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-200 text-amber-800">
+                  {variantList.length} {variantList.length === 1 ? 'variant' : 'variants'}
+                </span>
               </div>
-              <button
-                type="button"
-                onClick={() => toggleExpandVariants(prodId)}
-                className="text-xs text-charcoal-light hover:text-charcoal flex items-center gap-1"
-              >
-                <X className="w-3.5 h-3.5" />
-                Close
-              </button>
+
+              <div className="flex items-center gap-2">
+                {/* Add Variant Button */}
+                <button
+                  type="button"
+                  onClick={() => handleAddVariant(prodId)}
+                  className="flex items-center gap-1.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors shadow-xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Variant</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => toggleExpandVariants(prodId)}
+                  className="text-xs text-charcoal-light hover:text-charcoal flex items-center gap-1 border border-border-warm px-2.5 py-1.5 rounded-xl bg-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Close</span>
+                </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-amber-100/60 border-b border-amber-200">
-                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Variant Option</th>
-                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Variant SKU</th>
-                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Barcode</th>
-                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Price Override (₹)</th>
-                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Stock</th>
-                    <th className="py-2 px-3 text-center font-semibold text-charcoal-light">Active</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-amber-100">
-                  {ed.variants.map((v, vIdx) => {
-                    const thumb = v.images?.[0] || v.image;
-                    return (
-                      <tr key={v.sku || vIdx} className="hover:bg-amber-50/40">
-                        {/* Name / Thumb */}
-                        <td className="py-2 px-3 font-medium text-charcoal flex items-center gap-2">
-                          {thumb ? (
-                            <img src={thumb} alt={v.name} className="w-7 h-7 object-cover rounded border border-border-warm flex-shrink-0" />
-                          ) : (
-                            <div className="w-7 h-7 rounded border border-dashed border-border-warm bg-ivory flex-shrink-0" />
-                          )}
-                          <span>{v.name}</span>
-                        </td>
+            {variantList.length === 0 ? (
+              <div className="text-center py-6 bg-white rounded-xl border border-dashed border-amber-300 p-4">
+                <p className="text-xs text-charcoal-light mb-2">No variants created yet for this product.</p>
+                <button
+                  type="button"
+                  onClick={() => handleAddVariant(prodId)}
+                  className="inline-flex items-center gap-1.5 bg-amber-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add First Variant
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white shadow-xs">
+                <table className="w-full text-xs min-w-[700px]">
+                  <thead>
+                    <tr className="bg-amber-100/70 border-b border-amber-200">
+                      <th className="py-2.5 px-3 text-left font-semibold text-charcoal-light min-w-[180px]">Variant Name / Option</th>
+                      <th className="py-2.5 px-3 text-left font-semibold text-charcoal-light min-w-[130px]">Variant SKU</th>
+                      <th className="py-2.5 px-3 text-left font-semibold text-charcoal-light min-w-[120px]">Barcode</th>
+                      <th className="py-2.5 px-3 text-left font-semibold text-charcoal-light min-w-[120px]">Price Override (₹)</th>
+                      <th className="py-2.5 px-3 text-left font-semibold text-charcoal-light min-w-[80px]">Stock</th>
+                      <th className="py-2.5 px-3 text-center font-semibold text-charcoal-light w-16">Active</th>
+                      <th className="py-2.5 px-2 text-right w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100">
+                    {variantList.map((v, vIdx) => {
+                      const thumb = v.images?.[0] || v.image;
+                      const uploadKey = `${prodId}-${vIdx}`;
+                      const isUploading = uploadingVariantKey === uploadKey;
 
-                        {/* SKU */}
-                        <td className="py-2 px-3">
-                          {isBulkEditMode ? (
-                            <input
-                              type="text"
-                              value={v.sku}
-                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'sku', e.target.value.toUpperCase())}
-                              className="w-32 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
-                            />
-                          ) : (
-                            <span className="font-mono text-charcoal">{v.sku}</span>
-                          )}
-                        </td>
+                      return (
+                        <tr key={v.sku || vIdx} className="hover:bg-amber-50/40">
+                          {/* Name / Thumb */}
+                          <td className="py-2.5 px-3 font-medium text-charcoal">
+                            <div className="flex items-center gap-2">
+                              {/* Thumbnail with photo upload trigger */}
+                              <div className="relative group w-8 h-8 rounded-lg overflow-hidden border border-border-warm flex-shrink-0 bg-ivory">
+                                {thumb ? (
+                                  <img src={thumb} alt={v.name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-charcoal-light">
+                                    <ImagePlus className="w-3.5 h-3.5 opacity-60" />
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => fileInputRefs.current[uploadKey]?.click()}
+                                  className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white"
+                                  title="Upload / Change variant photo"
+                                >
+                                  {isUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />}
+                                </button>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  ref={(el) => { fileInputRefs.current[uploadKey] = el; }}
+                                  onChange={(e) => {
+                                    if (e.target.files?.[0]) {
+                                      handleVariantImageUpload(prodId, vIdx, e.target.files[0]);
+                                    }
+                                  }}
+                                />
+                              </div>
 
-                        {/* Barcode */}
-                        <td className="py-2 px-3">
-                          {isBulkEditMode ? (
-                            <input
-                              type="text"
-                              value={v.barcode || ''}
-                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'barcode', e.target.value)}
-                              className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
-                              placeholder="Barcode"
-                            />
-                          ) : (
-                            <span className="font-mono text-charcoal-light">{v.barcode || '-'}</span>
-                          )}
-                        </td>
+                              {isBulkEditMode ? (
+                                <input
+                                  type="text"
+                                  value={v.name}
+                                  onChange={(e) => {
+                                    handleVariantCellChange(prodId, vIdx, 'name', e.target.value);
+                                    const updatedOptVals = { ...(v.option_values || {}), Option: e.target.value };
+                                    handleVariantCellChange(prodId, vIdx, 'option_values', updatedOptVals);
+                                  }}
+                                  placeholder="Option name (e.g. Red, XL)"
+                                  className="w-36 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white font-medium"
+                                />
+                              ) : (
+                                <span>{v.name}</span>
+                              )}
+                            </div>
+                          </td>
 
-                        {/* Price Override */}
-                        <td className="py-2 px-3">
-                          {isBulkEditMode ? (
-                            <input
-                              type="number"
-                              min="0"
-                              value={v.price_override ?? ''}
-                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'price_override', e.target.value)}
-                              placeholder={ed.price ? `Base: ₹${ed.price}` : 'Base'}
-                              className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white"
-                            />
-                          ) : (
-                            v.price_override != null ? (
-                              <span className="font-semibold text-charcoal">₹{v.price_override}</span>
+                          {/* SKU */}
+                          <td className="py-2.5 px-3">
+                            {isBulkEditMode ? (
+                              <input
+                                type="text"
+                                value={v.sku}
+                                onChange={(e) => handleVariantCellChange(prodId, vIdx, 'sku', e.target.value.toUpperCase())}
+                                className="w-32 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
+                              />
                             ) : (
-                              <span className="text-charcoal-light text-[11px]">(Inherits ₹{ed.price})</span>
-                            )
-                          )}
-                        </td>
+                              <span className="font-mono text-charcoal">{v.sku}</span>
+                            )}
+                          </td>
 
-                        {/* Stock */}
-                        <td className="py-2 px-3">
-                          {isBulkEditMode ? (
-                            <input
-                              type="number"
-                              min="0"
-                              value={v.stock}
-                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'stock', e.target.value)}
-                              className="w-20 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white font-medium"
-                            />
-                          ) : (
-                            <span className="font-medium text-charcoal">{v.stock}</span>
-                          )}
-                        </td>
-
-                        {/* Active */}
-                        <td className="py-2 px-3 text-center">
-                          {isBulkEditMode ? (
-                            <input
-                              type="checkbox"
-                              checked={v.is_active !== false}
-                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'is_active', e.target.checked)}
-                              className="w-4 h-4 accent-gold cursor-pointer"
-                            />
-                          ) : (
-                            v.is_active !== false ? (
-                              <span className="text-emerald-600 font-semibold text-xs">Yes</span>
+                          {/* Barcode */}
+                          <td className="py-2.5 px-3">
+                            {isBulkEditMode ? (
+                              <input
+                                type="text"
+                                value={v.barcode || ''}
+                                onChange={(e) => handleVariantCellChange(prodId, vIdx, 'barcode', e.target.value)}
+                                className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
+                                placeholder="Barcode"
+                              />
                             ) : (
-                              <span className="text-red-500 font-semibold text-xs">No</span>
-                            )
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                              <span className="font-mono text-charcoal-light">{v.barcode || '-'}</span>
+                            )}
+                          </td>
+
+                          {/* Price Override */}
+                          <td className="py-2.5 px-3">
+                            {isBulkEditMode ? (
+                              <input
+                                type="number"
+                                min="0"
+                                value={v.price_override ?? ''}
+                                onChange={(e) => handleVariantCellChange(prodId, vIdx, 'price_override', e.target.value)}
+                                placeholder={ed.price ? `Base: ₹${ed.price}` : 'Base'}
+                                className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white"
+                              />
+                            ) : (
+                              v.price_override != null ? (
+                                <span className="font-semibold text-charcoal">₹{v.price_override}</span>
+                              ) : (
+                                <span className="text-charcoal-light text-[11px]">(Inherits ₹{ed.price})</span>
+                              )
+                            )}
+                          </td>
+
+                          {/* Stock */}
+                          <td className="py-2.5 px-3">
+                            {isBulkEditMode ? (
+                              <input
+                                type="number"
+                                min="0"
+                                value={v.stock}
+                                onChange={(e) => handleVariantCellChange(prodId, vIdx, 'stock', e.target.value)}
+                                className="w-20 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white font-medium"
+                              />
+                            ) : (
+                              <span className="font-medium text-charcoal">{v.stock}</span>
+                            )}
+                          </td>
+
+                          {/* Active */}
+                          <td className="py-2.5 px-3 text-center">
+                            {isBulkEditMode ? (
+                              <input
+                                type="checkbox"
+                                checked={v.is_active !== false}
+                                onChange={(e) => handleVariantCellChange(prodId, vIdx, 'is_active', e.target.checked)}
+                                className="w-4 h-4 accent-gold cursor-pointer"
+                              />
+                            ) : (
+                              v.is_active !== false ? (
+                                <span className="text-emerald-600 font-semibold text-xs">Yes</span>
+                              ) : (
+                                <span className="text-red-500 font-semibold text-xs">No</span>
+                              )
+                            )}
+                          </td>
+
+                          {/* Delete Variant */}
+                          <td className="py-2.5 px-2 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVariant(prodId, vIdx)}
+                              className="text-charcoal-light hover:text-red-600 p-1 rounded transition-colors"
+                              title="Delete this variant"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Bottom Add Variant trigger */}
+                <div className="p-2 bg-amber-50/50 border-t border-amber-200 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => handleAddVariant(prodId)}
+                    className="flex items-center gap-1 text-xs text-amber-800 hover:text-amber-900 font-semibold hover:underline"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Add Another Variant</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         );
       })}

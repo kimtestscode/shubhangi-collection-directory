@@ -271,7 +271,7 @@ export default function ProductForm({ product, mode }: Props) {
       parent_sku: null,
       color: null,
       variant_type: null,
-      product_type: 'simple',
+      product_type: hasVariants ? 'variable' : 'simple',
     };
 
     const res = mode === 'create'

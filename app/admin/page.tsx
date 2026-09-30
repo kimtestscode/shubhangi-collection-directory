@@ -2,8 +2,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { Plus, Edit, Trash2, AlertCircle, Download, Upload, SlidersHorizontal, Save, X, Check, Loader2, CheckSquare, Square } from 'lucide-react';
-import { Product, ProductType, Availability, CategoryItem } from '@/lib/types';
+import { 
+  Plus, Edit, Trash2, AlertCircle, Download, Upload, SlidersHorizontal, 
+  Save, X, Check, Loader2, CheckSquare, Square, ChevronDown, ChevronRight, Layers
+} from 'lucide-react';
+import { Product, ProductType, Availability, CategoryItem, InlineVariant } from '@/lib/types';
 import { exportProductsToCSV } from '@/lib/csv';
 import { CATEGORIES } from '@/lib/utils';
 import AvailabilityBadge from '@/components/shared/AvailabilityBadge';
@@ -21,6 +24,7 @@ export default function AdminProductsPage() {
   const [isBulkEditMode, setIsBulkEditMode] = useState(false);
   const [editedProducts, setEditedProducts] = useState<Record<string, Product>>({});
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [expandedVariantIds, setExpandedVariantIds] = useState<Set<string>>(new Set());
   const [bulkSaving, setBulkSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [bulkAction, setBulkAction] = useState('');
@@ -50,22 +54,27 @@ export default function AdminProductsPage() {
 
   useEffect(() => { load(); }, []);
 
+  const isProductChanged = (p: Product, ed?: Product) => {
+    if (!ed) return false;
+    return (
+      ed.name !== p.name ||
+      ed.sku !== p.sku ||
+      ed.category !== p.category ||
+      ed.price !== p.price ||
+      ed.regular_price !== p.regular_price ||
+      ed.availability !== p.availability ||
+      ed.product_type !== p.product_type ||
+      ed.has_variants !== p.has_variants ||
+      ed.color !== p.color ||
+      ed.featured !== p.featured ||
+      JSON.stringify(ed.variants || []) !== JSON.stringify(p.variants || [])
+    );
+  };
+
   const modifiedCount = useMemo(() => {
     let count = 0;
     for (const p of products) {
-      const ed = editedProducts[p.id];
-      if (!ed) continue;
-      if (
-        ed.name !== p.name ||
-        ed.sku !== p.sku ||
-        ed.category !== p.category ||
-        ed.price !== p.price ||
-        ed.regular_price !== p.regular_price ||
-        ed.availability !== p.availability ||
-        ed.product_type !== p.product_type ||
-        ed.color !== p.color ||
-        ed.featured !== p.featured
-      ) {
+      if (isProductChanged(p, editedProducts[p.id])) {
         count++;
       }
     }
@@ -103,6 +112,57 @@ export default function AdminProductsPage() {
     }));
   };
 
+  const handleTypeChange = (id: string, type: 'simple' | 'variable') => {
+    setEditedProducts((prev) => {
+      const prod = prev[id];
+      if (!prod) return prev;
+      return {
+        ...prev,
+        [id]: {
+          ...prod,
+          product_type: type,
+          has_variants: type === 'variable',
+        },
+      };
+    });
+  };
+
+  const handleVariantCellChange = (productId: string, variantIdx: number, field: string, value: any) => {
+    setEditedProducts((prev) => {
+      const prod = prev[productId];
+      if (!prod || !Array.isArray(prod.variants)) return prev;
+
+      const updatedVariants = prod.variants.map((v, i) => {
+        if (i !== variantIdx) return v;
+        return {
+          ...v,
+          [field]: field === 'price_override'
+            ? (value === '' ? null : Number(value))
+            : field === 'stock'
+              ? Number(value)
+              : value,
+        };
+      });
+
+      return {
+        ...prev,
+        [productId]: {
+          ...prod,
+          variants: updatedVariants,
+        },
+      };
+    });
+  };
+
+  const toggleExpandVariants = (id: string) => {
+    setExpandedVariantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const toggleSelectAll = () => {
     if (selectedIds.size === products.length) {
       setSelectedIds(new Set());
@@ -133,7 +193,23 @@ export default function AdminProductsPage() {
       return;
     }
 
-    if (['available', 'out_of_stock', 'coming_soon', 'hidden'].includes(bulkAction)) {
+    if (bulkAction === 'set_variable') {
+      setEditedProducts((prev) => {
+        const next = { ...prev };
+        selectedIds.forEach((id) => {
+          if (next[id]) next[id] = { ...next[id], product_type: 'variable', has_variants: true };
+        });
+        return next;
+      });
+    } else if (bulkAction === 'set_simple') {
+      setEditedProducts((prev) => {
+        const next = { ...prev };
+        selectedIds.forEach((id) => {
+          if (next[id]) next[id] = { ...next[id], product_type: 'simple', has_variants: false };
+        });
+        return next;
+      });
+    } else if (['available', 'out_of_stock', 'coming_soon', 'hidden'].includes(bulkAction)) {
       setEditedProducts((prev) => {
         const next = { ...prev };
         selectedIds.forEach((id) => {
@@ -158,18 +234,7 @@ export default function AdminProductsPage() {
     const changedProducts: Product[] = [];
     for (const p of products) {
       const ed = editedProducts[p.id];
-      if (!ed) continue;
-      if (
-        ed.name !== p.name ||
-        ed.sku !== p.sku ||
-        ed.category !== p.category ||
-        ed.price !== p.price ||
-        ed.regular_price !== p.regular_price ||
-        ed.availability !== p.availability ||
-        ed.product_type !== p.product_type ||
-        ed.color !== p.color ||
-        ed.featured !== p.featured
-      ) {
+      if (ed && isProductChanged(p, ed)) {
         changedProducts.push(ed);
       }
     }
@@ -214,40 +279,41 @@ export default function AdminProductsPage() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {/* WordPress-style Bulk Editor Toggle */}
+          {/* Bulk Editor Toggle */}
           <button
             onClick={() => {
               if (isBulkEditMode) handleDiscardBulkChanges();
-              setIsBulkEditMode(!isBulkEditMode);
+              setIsBulkEditMode((prev) => !prev);
             }}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium transition-all ${
+            className={`flex items-center gap-2 border px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
               isBulkEditMode
-                ? 'bg-amber-500 text-white shadow-sm ring-2 ring-amber-300'
-                : 'border border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold'
+                ? 'bg-amber-100 border-amber-400 text-amber-900 shadow-inner'
+                : 'border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold shadow-sm'
             }`}
           >
-            <SlidersHorizontal className="w-4 h-4" />
-            {isBulkEditMode ? 'Bulk Editor (Active)' : 'Bulk Editor'}
+            <SlidersHorizontal className="w-4 h-4 text-amber-700" />
+            <span>{isBulkEditMode ? 'Exit Bulk Editor' : 'Bulk Editor'}</span>
           </button>
 
           <button
             onClick={handleExportCSV}
-            disabled={products.length === 0}
-            className="flex items-center gap-1.5 border border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold px-3.5 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 border border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold px-4 py-2.5 rounded-xl text-sm font-medium transition-colors shadow-sm"
           >
             <Download className="w-4 h-4" />
             Export CSV
           </button>
+
           <button
             onClick={() => setIsImportModalOpen(true)}
-            className="flex items-center gap-1.5 border border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold px-3.5 py-2 rounded-xl text-sm font-medium transition-colors"
+            className="flex items-center gap-2 border border-border-warm bg-white text-charcoal hover:border-gold hover:text-gold px-4 py-2.5 rounded-xl text-sm font-medium transition-colors shadow-sm"
           >
             <Upload className="w-4 h-4" />
             Import CSV
           </button>
+
           <Link
             href="/admin/products/new"
-            className="flex items-center gap-2 bg-charcoal text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-charcoal/90 transition-colors"
+            className="flex items-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-colors shadow-sm"
           >
             <Plus className="w-4 h-4" />
             Add Product
@@ -255,28 +321,33 @@ export default function AdminProductsPage() {
         </div>
       </div>
 
-      {/* Bulk Editor Toolbar (When Active) */}
+      {/* Bulk Editor Action Bar */}
       {isBulkEditMode && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm animate-fadeIn">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-xs font-semibold text-amber-900 uppercase tracking-wider bg-amber-200/70 px-2.5 py-1 rounded">
-              WordPress Bulk Mode
+            <span className="text-xs font-semibold uppercase tracking-wider text-amber-900 bg-amber-200/80 px-2.5 py-1 rounded-lg">
+              Bulk Edit Mode
+            </span>
+            <span className="text-xs text-amber-800">
+              {selectedIds.size} of {products.length} selected
             </span>
 
-            {/* Bulk Selection Action */}
             <div className="flex items-center gap-2">
               <select
                 value={bulkAction}
                 onChange={(e) => setBulkAction(e.target.value)}
-                disabled={selectedIds.size === 0}
-                className="border border-amber-300 rounded-xl px-3 py-1.5 text-xs text-charcoal bg-white focus:outline-none disabled:opacity-50"
+                className="bg-white border border-amber-300 rounded-xl px-3 py-1.5 text-xs text-charcoal focus:outline-none focus:border-gold"
               >
-                <option value="">Bulk Actions ({selectedIds.size} selected)...</option>
+                <option value="">Bulk Actions...</option>
+                <optgroup label="Set Product Type">
+                  <option value="set_variable">Set Type to Variable</option>
+                  <option value="set_simple">Set Type to Simple</option>
+                </optgroup>
                 <optgroup label="Set Availability">
-                  <option value="available">Set to Available</option>
-                  <option value="out_of_stock">Set to Out of Stock</option>
-                  <option value="coming_soon">Set to Coming Soon</option>
-                  <option value="hidden">Set to Hidden</option>
+                  <option value="available">Mark Available</option>
+                  <option value="out_of_stock">Mark Out of Stock</option>
+                  <option value="coming_soon">Mark Coming Soon</option>
+                  <option value="hidden">Mark Hidden</option>
                 </optgroup>
                 <optgroup label="Set Category">
                   {categories.map((c) => (
@@ -301,7 +372,7 @@ export default function AdminProductsPage() {
           <div className="flex items-center gap-2">
             {modifiedCount > 0 && (
               <span className="text-xs font-medium text-amber-800">
-                {modifiedCount} {modifiedCount === 1 ? 'change' : 'changes'} pending
+                {modifiedCount} {modifiedCount === 1 ? 'product change' : 'product changes'} pending
               </span>
             )}
 
@@ -365,7 +436,7 @@ export default function AdminProductsPage() {
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[220px]">Product Name</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[130px]">SKU</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[140px]">Category</th>
-                <th className="px-4 py-3 text-charcoal-light font-medium min-w-[130px]">Type / Color</th>
+                <th className="px-4 py-3 text-charcoal-light font-medium min-w-[160px]">Type / Variants</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[120px]">MRP (₹)</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[120px]">Offer Price (₹)</th>
                 <th className="px-4 py-3 text-charcoal-light font-medium min-w-[140px]">Availability</th>
@@ -376,17 +447,14 @@ export default function AdminProductsPage() {
             <tbody className="divide-y divide-border-warm">
               {products.map((p) => {
                 const ed = editedProducts[p.id] || p;
-                const isChanged = isBulkEditMode && (
-                  ed.name !== p.name ||
-                  ed.sku !== p.sku ||
-                  ed.category !== p.category ||
-                  ed.price !== p.price ||
-                  ed.regular_price !== p.regular_price ||
-                  ed.availability !== p.availability ||
-                  ed.product_type !== p.product_type ||
-                  ed.color !== p.color ||
-                  ed.featured !== p.featured
+                const isChanged = isBulkEditMode && isProductChanged(p, ed);
+                const isVariable = Boolean(
+                  ed.has_variants || 
+                  ed.product_type === 'variable' || 
+                  (Array.isArray(ed.variants) && ed.variants.length > 0)
                 );
+                const variantList: InlineVariant[] = Array.isArray(ed.variants) ? ed.variants : [];
+                const isExpanded = expandedVariantIds.has(p.id);
 
                 return (
                   <tr
@@ -397,41 +465,65 @@ export default function AdminProductsPage() {
                   >
                     {/* Checkbox */}
                     {isBulkEditMode && (
-                      <td className="px-3 py-3 text-center">
+                      <td className="px-3 py-3 text-center align-top">
                         <input
                           type="checkbox"
                           checked={selectedIds.has(p.id)}
                           onChange={() => toggleSelectOne(p.id)}
-                          className="w-4 h-4 accent-gold cursor-pointer"
+                          className="w-4 h-4 accent-gold cursor-pointer mt-1.5"
                         />
                       </td>
                     )}
 
                     {/* Name */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
                       {isBulkEditMode ? (
-                        <input
-                          type="text"
-                          value={ed.name}
-                          onChange={(e) => handleCellChange(p.id, 'name', e.target.value)}
-                          className="w-full border border-border-warm focus:border-gold rounded-lg px-2.5 py-1.5 text-xs text-charcoal bg-white"
-                        />
+                        <div className="space-y-1">
+                          <input
+                            type="text"
+                            value={ed.name}
+                            onChange={(e) => handleCellChange(p.id, 'name', e.target.value)}
+                            className="w-full border border-border-warm focus:border-gold rounded-lg px-2.5 py-1.5 text-xs text-charcoal bg-white font-medium"
+                          />
+                          {isVariable && variantList.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandVariants(p.id)}
+                              className="flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200/80 px-2 py-0.5 rounded transition-colors"
+                            >
+                              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                              <span>{isExpanded ? 'Collapse Variants' : `Edit ${variantList.length} Variants`}</span>
+                            </button>
+                          )}
+                        </div>
                       ) : (
                         <div className="flex items-center gap-3">
-                          <div className="relative w-9 h-9 flex-shrink-0 rounded-lg overflow-hidden bg-ivory-dark border border-border-warm">
+                          <div className="relative w-10 h-10 flex-shrink-0 rounded-lg overflow-hidden bg-ivory-dark border border-border-warm">
                             {p.thumbnail && (
-                              <Image src={p.thumbnail} alt={p.name} fill className="object-cover" sizes="36px" />
+                              <Image src={p.thumbnail} alt={p.name} fill className="object-cover" sizes="40px" />
                             )}
                           </div>
                           <div>
-                            <p className="font-medium text-charcoal text-xs sm:text-sm">{p.name}</p>
+                            <Link href={`/products/${p.slug}`} target="_blank" className="font-medium text-charcoal text-xs sm:text-sm hover:text-gold transition-colors">
+                              {p.name}
+                            </Link>
+                            {isVariable && variantList.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => toggleExpandVariants(p.id)}
+                                className="flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 font-medium mt-0.5"
+                              >
+                                {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                <span>{variantList.length} variants</span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
                     </td>
 
                     {/* SKU */}
-                    <td className="px-4 py-3 font-mono text-xs">
+                    <td className="px-4 py-3 font-mono text-xs align-top">
                       {isBulkEditMode ? (
                         <input
                           type="text"
@@ -440,12 +532,12 @@ export default function AdminProductsPage() {
                           className="w-full border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs text-charcoal font-mono bg-white"
                         />
                       ) : (
-                        <span className="text-charcoal-light">{p.sku}</span>
+                        <span className="text-charcoal-light font-mono font-medium">{p.sku}</span>
                       )}
                     </td>
 
                     {/* Category */}
-                    <td className="px-4 py-3 text-xs">
+                    <td className="px-4 py-3 text-xs align-top">
                       {isBulkEditMode ? (
                         <select
                           value={ed.category}
@@ -461,38 +553,47 @@ export default function AdminProductsPage() {
                       )}
                     </td>
 
-                    {/* Type & Color */}
-                    <td className="px-4 py-3 text-xs">
+                    {/* Type & Variants */}
+                    <td className="px-4 py-3 text-xs align-top">
                       {isBulkEditMode ? (
-                        <div className="flex items-center gap-1">
+                        <div className="space-y-1.5">
                           <select
-                            value={ed.product_type}
-                            onChange={(e) => handleCellChange(p.id, 'product_type', e.target.value as ProductType)}
-                            className="border border-border-warm focus:border-gold rounded-lg px-1.5 py-1 text-[11px] text-charcoal bg-white"
+                            value={isVariable ? 'variable' : 'simple'}
+                            onChange={(e) => handleTypeChange(p.id, e.target.value as 'simple' | 'variable')}
+                            className="w-full border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs text-charcoal bg-white font-medium"
                           >
                             <option value="simple">Simple</option>
                             <option value="variable">Variable</option>
-                            <option value="variation">Variation</option>
                           </select>
-                          <input
-                            type="text"
-                            value={ed.color || ''}
-                            placeholder="Color"
-                            onChange={(e) => handleCellChange(p.id, 'color', e.target.value)}
-                            className="w-20 border border-border-warm focus:border-gold rounded-lg px-1.5 py-1 text-[11px] text-charcoal bg-white"
-                          />
+                          {isVariable && variantList.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandVariants(p.id)}
+                              className="text-[11px] text-amber-800 underline font-medium block"
+                            >
+                              {isExpanded ? 'Hide variant rows' : `Show ${variantList.length} variant rows`}
+                            </button>
+                          )}
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5">
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase tracking-wider ${
-                            p.product_type === 'variable' ? 'bg-amber-100 text-amber-800' :
-                            p.product_type === 'variation' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'
-                          }`}>
-                            {p.product_type || 'simple'}
-                          </span>
-                          {p.color && (
-                            <span className="text-[11px] text-charcoal font-medium bg-ivory-dark px-1.5 py-0.5 rounded border border-border-warm">
-                              {p.color}
+                        <div className="flex flex-col gap-1 items-start">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${
+                              isVariable 
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300' 
+                                : 'bg-gray-100 text-gray-700 border border-gray-200'
+                            }`}>
+                              {isVariable ? 'Variable' : 'Simple'}
+                            </span>
+                            {isVariable && variantList.length > 0 && (
+                              <span className="text-[11px] text-charcoal-light font-medium">
+                                ({variantList.length})
+                              </span>
+                            )}
+                          </div>
+                          {p.option_types && p.option_types.length > 0 && (
+                            <span className="text-[10px] text-charcoal-light leading-tight">
+                              {p.option_types.map(o => `${o.name || o.type}: ${o.values.join(', ')}`).join(' | ')}
                             </span>
                           )}
                         </div>
@@ -500,12 +601,12 @@ export default function AdminProductsPage() {
                     </td>
 
                     {/* Regular Price (MRP) */}
-                    <td className="px-4 py-3 text-xs">
+                    <td className="px-4 py-3 text-xs align-top">
                       {isBulkEditMode ? (
                         <input
                           type="number"
                           value={ed.regular_price ?? ''}
-                          onChange={(e) => handleCellChange(p.id, 'regular_price', e.target.value)}
+                          onChange={(e) => handleCellChange(p.id, 'regular_price', e.target.value === '' ? null : Number(e.target.value))}
                           placeholder="MRP"
                           className="w-24 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs text-charcoal bg-white"
                         />
@@ -515,14 +616,14 @@ export default function AdminProductsPage() {
                     </td>
 
                     {/* Offer Price */}
-                    <td className="px-4 py-3 text-xs font-medium">
+                    <td className="px-4 py-3 text-xs font-medium align-top">
                       {isBulkEditMode ? (
                         <input
                           type="number"
                           value={ed.price ?? ''}
-                          onChange={(e) => handleCellChange(p.id, 'price', e.target.value)}
+                          onChange={(e) => handleCellChange(p.id, 'price', e.target.value === '' ? null : Number(e.target.value))}
                           placeholder="Offer"
-                          className="w-24 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs text-charcoal bg-white"
+                          className="w-24 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs text-charcoal bg-white font-semibold"
                         />
                       ) : (
                         <PriceDisplay price={p.price} regularPrice={p.regular_price} currency={p.currency} size="sm" />
@@ -530,7 +631,7 @@ export default function AdminProductsPage() {
                     </td>
 
                     {/* Availability */}
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
                       {isBulkEditMode ? (
                         <select
                           value={ed.availability}
@@ -548,13 +649,13 @@ export default function AdminProductsPage() {
                     </td>
 
                     {/* Featured */}
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3 text-center align-top">
                       {isBulkEditMode ? (
                         <input
                           type="checkbox"
                           checked={ed.featured}
                           onChange={(e) => handleCellChange(p.id, 'featured', e.target.checked)}
-                          className="w-4 h-4 accent-gold cursor-pointer"
+                          className="w-4 h-4 accent-gold cursor-pointer mt-1"
                         />
                       ) : (
                         p.featured ? <span className="text-gold text-xs font-semibold">★</span> : <span className="text-gray-300 text-xs">-</span>
@@ -563,12 +664,13 @@ export default function AdminProductsPage() {
 
                     {/* Actions */}
                     {!isBulkEditMode && (
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right align-top">
                         <div className="flex items-center justify-end gap-2">
                           <Link
                             href={`/admin/products/${p.id}/edit`}
                             className="p-1.5 text-charcoal-light hover:text-gold rounded-lg hover:bg-gold/10 transition-colors"
                             aria-label="Edit product"
+                            title="Edit product & variants"
                           >
                             <Edit className="w-4 h-4" />
                           </Link>
@@ -577,6 +679,7 @@ export default function AdminProductsPage() {
                             disabled={deleting === p.id}
                             className="p-1.5 text-charcoal-light hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
                             aria-label="Delete product"
+                            title="Delete product"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -590,6 +693,152 @@ export default function AdminProductsPage() {
           </table>
         </div>
       )}
+
+      {/* Expanded Variant Sub-Panels for Variable Products */}
+      {Array.from(expandedVariantIds).map((prodId) => {
+        const p = products.find(prod => prod.id === prodId);
+        const ed = editedProducts[prodId] || p;
+        if (!ed || !Array.isArray(ed.variants) || ed.variants.length === 0) return null;
+
+        return (
+          <div key={`variants-panel-${prodId}`} className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-amber-700" />
+                <h3 className="text-sm font-semibold text-charcoal">
+                  Variants for: <span className="text-amber-900">{ed.name}</span>
+                </h3>
+                <span className="text-xs text-charcoal-light font-mono font-normal">
+                  (Base SKU: {ed.sku})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => toggleExpandVariants(prodId)}
+                className="text-xs text-charcoal-light hover:text-charcoal flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                Close
+              </button>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-amber-100/60 border-b border-amber-200">
+                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Variant Option</th>
+                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Variant SKU</th>
+                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Barcode</th>
+                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Price Override (₹)</th>
+                    <th className="py-2 px-3 text-left font-semibold text-charcoal-light">Stock</th>
+                    <th className="py-2 px-3 text-center font-semibold text-charcoal-light">Active</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100">
+                  {ed.variants.map((v, vIdx) => {
+                    const thumb = v.images?.[0] || v.image;
+                    return (
+                      <tr key={v.sku || vIdx} className="hover:bg-amber-50/40">
+                        {/* Name / Thumb */}
+                        <td className="py-2 px-3 font-medium text-charcoal flex items-center gap-2">
+                          {thumb ? (
+                            <img src={thumb} alt={v.name} className="w-7 h-7 object-cover rounded border border-border-warm flex-shrink-0" />
+                          ) : (
+                            <div className="w-7 h-7 rounded border border-dashed border-border-warm bg-ivory flex-shrink-0" />
+                          )}
+                          <span>{v.name}</span>
+                        </td>
+
+                        {/* SKU */}
+                        <td className="py-2 px-3">
+                          {isBulkEditMode ? (
+                            <input
+                              type="text"
+                              value={v.sku}
+                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'sku', e.target.value.toUpperCase())}
+                              className="w-32 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
+                            />
+                          ) : (
+                            <span className="font-mono text-charcoal">{v.sku}</span>
+                          )}
+                        </td>
+
+                        {/* Barcode */}
+                        <td className="py-2 px-3">
+                          {isBulkEditMode ? (
+                            <input
+                              type="text"
+                              value={v.barcode || ''}
+                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'barcode', e.target.value)}
+                              className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs font-mono bg-white"
+                              placeholder="Barcode"
+                            />
+                          ) : (
+                            <span className="font-mono text-charcoal-light">{v.barcode || '-'}</span>
+                          )}
+                        </td>
+
+                        {/* Price Override */}
+                        <td className="py-2 px-3">
+                          {isBulkEditMode ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={v.price_override ?? ''}
+                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'price_override', e.target.value)}
+                              placeholder={ed.price ? `Base: ₹${ed.price}` : 'Base'}
+                              className="w-28 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white"
+                            />
+                          ) : (
+                            v.price_override != null ? (
+                              <span className="font-semibold text-charcoal">₹{v.price_override}</span>
+                            ) : (
+                              <span className="text-charcoal-light text-[11px]">(Inherits ₹{ed.price})</span>
+                            )
+                          )}
+                        </td>
+
+                        {/* Stock */}
+                        <td className="py-2 px-3">
+                          {isBulkEditMode ? (
+                            <input
+                              type="number"
+                              min="0"
+                              value={v.stock}
+                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'stock', e.target.value)}
+                              className="w-20 border border-border-warm focus:border-gold rounded-lg px-2 py-1 text-xs bg-white font-medium"
+                            />
+                          ) : (
+                            <span className="font-medium text-charcoal">{v.stock}</span>
+                          )}
+                        </td>
+
+                        {/* Active */}
+                        <td className="py-2 px-3 text-center">
+                          {isBulkEditMode ? (
+                            <input
+                              type="checkbox"
+                              checked={v.is_active !== false}
+                              onChange={(e) => handleVariantCellChange(prodId, vIdx, 'is_active', e.target.checked)}
+                              className="w-4 h-4 accent-gold cursor-pointer"
+                            />
+                          ) : (
+                            v.is_active !== false ? (
+                              <span className="text-emerald-600 font-semibold text-xs">Yes</span>
+                            ) : (
+                              <span className="text-red-500 font-semibold text-xs">No</span>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })}
 
       {/* CSV Import Modal */}
       <CSVImportModal

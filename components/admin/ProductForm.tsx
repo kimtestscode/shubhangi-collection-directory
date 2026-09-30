@@ -591,9 +591,9 @@ export default function ProductForm({ product, mode }: Props) {
 
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
-      <div className="flex gap-3 pt-2 flex-wrap items-center">
+      <div className="flex gap-2.5 sm:gap-3 pt-2 flex-wrap items-center">
         <button type="submit" disabled={saving}
-          className="flex items-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50">
+          className="flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium px-5 sm:px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />}
           {saving ? 'Saving...' : mode === 'create' ? 'Add Product' : 'Save Changes'}
         </button>
@@ -602,7 +602,7 @@ export default function ProductForm({ product, mode }: Props) {
           type="button"
           onClick={() => setIsStatusEditorOpen(true)}
           disabled={allStatusImages.length === 0}
-          className="flex items-center gap-2 border-2 border-gold text-gold hover:bg-gold hover:text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-40 disabled:pointer-events-none shadow-xs"
+          className="flex items-center justify-center gap-2 border-2 border-gold text-gold hover:bg-gold hover:text-white px-4 sm:px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-40 disabled:pointer-events-none shadow-xs"
           title="Create WhatsApp Status images with price & details stickers"
         >
           <Sparkles className="w-4 h-4" />
@@ -610,7 +610,7 @@ export default function ProductForm({ product, mode }: Props) {
         </button>
 
         <button type="button" onClick={() => router.back()}
-          className="border border-border-warm text-charcoal hover:border-gold hover:text-gold px-6 py-2.5 rounded-xl text-sm font-medium transition-colors">
+          className="border border-border-warm text-charcoal hover:border-gold hover:text-gold px-5 sm:px-6 py-2.5 rounded-xl text-sm font-medium transition-colors">
           Cancel
         </button>
       </div>

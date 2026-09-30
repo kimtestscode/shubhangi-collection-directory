@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Download, Plus, Trash2, Move, Sparkles, Image as ImageIcon, Layers, RefreshCw, Loader2 } from 'lucide-react';
+import { X, Download, Plus, Trash2, Move, Sparkles, Image as ImageIcon, Layers, RefreshCw, Loader2, Share2 } from 'lucide-react';
 
 export interface TextBox {
   id: string;
@@ -40,6 +40,21 @@ export default function StatusPhotoEditorModal({
   const [activeImgIdx, setActiveImgIdx] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
   const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
+  const [canShare, setCanShare] = useState(false);
+
+  // Check if Web Share API with files is supported (iOS Safari / Android Chrome)
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        const testFile = new File([''], 'test.png', { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [testFile] })) {
+          setCanShare(true);
+        }
+      } catch {
+        setCanShare(false);
+      }
+    }
+  }, []);
 
   // Initialize text boxes with realistic WhatsApp status story badges
   const [textBoxes, setTextBoxes] = useState<TextBox[]>(() => {
@@ -129,17 +144,22 @@ export default function StatusPhotoEditorModal({
     dragRef.current = null;
   }, []);
 
+  // Global event listeners with passive: false for touchmove to prevent mobile screen scrolling during drag
   useEffect(() => {
     const onMouseMove = (e: MouseEvent) => handleDragMove(e.clientX, e.clientY);
     const onMouseUp = () => handleDragEnd();
+    
     const onTouchMove = (e: TouchEvent) => {
-      if (e.touches[0]) handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+      if (dragRef.current && e.touches[0]) {
+        if (e.cancelable) e.preventDefault(); // Stop mobile screen scrolling while dragging badge
+        handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
+      }
     };
     const onTouchEnd = () => handleDragEnd();
 
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('touchmove', onTouchMove);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', onTouchEnd);
 
     return () => {
@@ -288,6 +308,33 @@ export default function StatusPhotoEditorModal({
     }
   };
 
+  const handleShareStatus = async () => {
+    if (!activeImage) return;
+    setIsExporting(true);
+    try {
+      const blob = await generateCanvasImage(activeImage);
+      const cleanSlug = productName ? productName.toLowerCase().replace(/[^a-z0-9]+/g, '-') : 'status';
+      const file = new File([blob], `${cleanSlug}-status-${activeImgIdx + 1}.jpg`, { type: 'image/jpeg' });
+      
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: productName || 'Product Status',
+          text: price ? `${productName} - ₹${price}` : productName,
+        });
+      } else {
+        await handleDownloadCurrent();
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error(err);
+        await handleDownloadCurrent();
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleDownloadAll = async () => {
     if (safeImages.length === 0) return;
     setIsExporting(true);
@@ -317,41 +364,42 @@ export default function StatusPhotoEditorModal({
   const selectedBox = textBoxes.find(b => b.id === selectedBoxId);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-      <div className="bg-white rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col max-h-[92vh] border border-border-warm overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-y-auto">
+      <div className="bg-white rounded-2xl sm:rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[92vh] border border-border-warm overflow-hidden my-auto">
 
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-border-warm flex items-center justify-between bg-ivory-dark/60">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-gold/15 text-gold flex items-center justify-center">
-              <Sparkles className="w-4 h-4" />
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border-warm flex items-center justify-between bg-ivory-dark/60">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 pr-2">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-gold/15 text-gold flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </div>
-            <div>
-              <h2 className="text-base font-semibold text-charcoal">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-semibold text-charcoal truncate">
                 WhatsApp Status Photo Editor
               </h2>
-              <p className="text-xs text-charcoal-light">
-                Drag price & details badges over your photo, then download ready-to-post status images
+              <p className="text-[11px] sm:text-xs text-charcoal-light hidden sm:block truncate">
+                Drag price & details badges over your photo, then download or share directly to Status
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-charcoal-light hover:text-charcoal hover:bg-black/5 rounded-xl transition-colors"
+            className="p-1.5 sm:p-2 text-charcoal-light hover:text-charcoal hover:bg-black/5 rounded-xl transition-colors flex-shrink-0"
+            title="Close editor"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 bg-ivory/20">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 bg-ivory/20">
 
-          {/* Canvas Preview Area (Left 7 Cols) */}
+          {/* Canvas Preview Area (Left 7 Cols on desktop, Top on mobile) */}
           <div className="lg:col-span-7 flex flex-col items-center">
             {/* Interactive Image Container */}
             <div
               ref={containerRef}
-              className="relative w-full max-w-[460px] aspect-[3/4] rounded-2xl overflow-hidden shadow-lg border-2 border-border-warm bg-black select-none touch-none"
+              className="relative w-full max-w-[340px] sm:max-w-[420px] lg:max-w-[460px] aspect-[3/4] rounded-2xl overflow-hidden shadow-lg border-2 border-border-warm bg-black select-none touch-none mx-auto"
             >
               {/* Product Background Image */}
               <img
@@ -382,17 +430,17 @@ export default function StatusPhotoEditorModal({
                       transform: 'translate(-50%, -50%)',
                       backgroundColor: style.bg,
                       color: style.text,
-                      fontSize: `${box.fontSize}px`,
+                      fontSize: `clamp(12px, ${box.fontSize * 0.88}px, ${box.fontSize}px)`,
                     }}
-                    className={`absolute z-20 cursor-grab active:cursor-grabbing font-bold text-center px-4 py-1.5 rounded-full whitespace-pre shadow-xl transition-shadow leading-tight ${
+                    className={`absolute z-20 cursor-grab active:cursor-grabbing font-bold text-center px-3 sm:px-4 py-1 sm:py-1.5 rounded-full max-w-[88%] whitespace-pre-line break-words shadow-xl transition-shadow leading-tight touch-none select-none ${
                       isSelected
                         ? 'ring-2 ring-gold ring-offset-2 ring-offset-black scale-[1.03]'
-                        : 'hover:ring-1 hover:ring-white/60'
+                        : 'hover:ring-1 hover:ring-white/60 active:scale-95'
                     }`}
                   >
                     <span>{box.text}</span>
 
-                    {/* Quick remove button when selected */}
+                    {/* Touch-friendly remove button when selected */}
                     {isSelected && (
                       <button
                         type="button"
@@ -400,17 +448,17 @@ export default function StatusPhotoEditorModal({
                           e.stopPropagation();
                           removeSelectedBox();
                         }}
-                        className="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center shadow-md hover:bg-red-700 transition-colors"
+                        className="absolute -top-2.5 -right-2.5 w-6 h-6 bg-red-600 text-white rounded-full flex items-center justify-center shadow-md hover:bg-red-700 transition-colors"
                         title="Delete badge"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
                 );
               })}
 
-              <div className="absolute bottom-2 left-2 pointer-events-none bg-black/60 backdrop-blur-xs text-white/80 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1">
+              <div className="absolute bottom-2 left-2 pointer-events-none bg-black/60 backdrop-blur-xs text-white/90 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1">
                 <Move className="w-3 h-3" />
                 <span>Drag badges to reposition</span>
               </div>
@@ -418,12 +466,12 @@ export default function StatusPhotoEditorModal({
 
             {/* Thumbnail switcher underneath photo */}
             {safeImages.length > 1 && (
-              <div className="flex items-center gap-2 overflow-x-auto max-w-[460px] py-3 mt-2">
+              <div className="flex items-center gap-2 overflow-x-auto max-w-[340px] sm:max-w-[420px] lg:max-w-[460px] py-2.5 mt-1 px-1 scrollbar-none">
                 {safeImages.map((img, i) => (
                   <button
                     key={i}
                     onClick={() => setActiveImgIdx(i)}
-                    className={`relative w-14 h-14 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${
+                    className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-xl overflow-hidden border-2 flex-shrink-0 transition-all ${
                       activeImgIdx === i ? 'border-gold shadow-md scale-105' : 'border-border-warm opacity-70 hover:opacity-100'
                     }`}
                   >
@@ -434,13 +482,13 @@ export default function StatusPhotoEditorModal({
             )}
           </div>
 
-          {/* Controls & Badges Settings (Right 5 Cols) */}
-          <div className="lg:col-span-5 space-y-5 flex flex-col justify-between">
-            <div className="space-y-5">
+          {/* Controls & Badges Settings (Right 5 Cols on desktop, Bottom on mobile) */}
+          <div className="lg:col-span-5 space-y-4 sm:space-y-5 flex flex-col justify-between">
+            <div className="space-y-4 sm:space-y-5">
 
               {/* Quick Presets (One-click add) */}
-              <div className="bg-white p-4 rounded-2xl border border-border-warm shadow-xs space-y-2.5">
-                <p className="text-xs font-bold uppercase tracking-wider text-charcoal">
+              <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-border-warm shadow-xs space-y-2">
+                <p className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-charcoal">
                   Quick Story Badges
                 </p>
                 <div className="flex flex-wrap gap-1.5">
@@ -448,7 +496,7 @@ export default function StatusPhotoEditorModal({
                     <button
                       type="button"
                       onClick={() => addTextBox(`ek piece Rs.${price} free shipping`)}
-                      className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                      className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                     >
                       + Rs.{price} free shipping
                     </button>
@@ -457,7 +505,7 @@ export default function StatusPhotoEditorModal({
                     <button
                       type="button"
                       onClick={() => addTextBox(`Rs.${price}/- Only`)}
-                      className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                      className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                     >
                       + Rs.{price}/- Only
                     </button>
@@ -465,35 +513,35 @@ export default function StatusPhotoEditorModal({
                   <button
                     type="button"
                     onClick={() => addTextBox('36 inch')}
-                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
                     + 36 inch
                   </button>
                   <button
                     type="button"
                     onClick={() => addTextBox('Limited Stock')}
-                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
                     + Limited Stock
                   </button>
                   <button
                     type="button"
                     onClick={() => addTextBox('Ready to Dispatch')}
-                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
                     + Ready to Dispatch
                   </button>
                   <button
                     type="button"
                     onClick={() => addTextBox('Original Opening Video Required')}
-                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal"
+                    className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
                     + Opening Video Required
                   </button>
                   <button
                     type="button"
                     onClick={() => addTextBox()}
-                    className="px-2.5 py-1 text-xs font-semibold text-gold border border-gold/40 hover:bg-gold/10 rounded-lg transition-colors flex items-center gap-1"
+                    className="px-2.5 py-1 text-xs font-semibold text-gold border border-gold/40 hover:bg-gold/10 rounded-lg transition-colors flex items-center gap-1 active:scale-95"
                   >
                     <Plus className="w-3 h-3" /> Custom Text
                   </button>
@@ -502,15 +550,15 @@ export default function StatusPhotoEditorModal({
 
               {/* Selected Badge Editor */}
               {selectedBox ? (
-                <div className="bg-white p-4 rounded-2xl border-2 border-gold/40 shadow-xs space-y-4">
+                <div className="bg-white p-3.5 sm:p-4 rounded-2xl border-2 border-gold/40 shadow-xs space-y-3.5 sm:space-y-4">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-gold flex items-center gap-1">
+                    <p className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-gold flex items-center gap-1">
                       <span>Edit Selected Badge</span>
                     </p>
                     <button
                       type="button"
                       onClick={removeSelectedBox}
-                      className="text-red-500 hover:text-red-700 text-xs flex items-center gap-1 font-medium"
+                      className="text-red-500 hover:text-red-700 text-xs flex items-center gap-1 font-medium p-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       Delete
@@ -519,7 +567,7 @@ export default function StatusPhotoEditorModal({
 
                   <div>
                     <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
-                      Text (enter multiple lines if needed)
+                      Badge Text (press Enter for multiple lines)
                     </label>
                     <textarea
                       rows={2}
@@ -535,7 +583,7 @@ export default function StatusPhotoEditorModal({
                     <label className="text-[11px] font-semibold text-charcoal-light block mb-1.5">
                       Pill Background Style
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2">
                       {(Object.keys(BG_STYLES) as TextBox['bg'][]).map((key) => {
                         const isCur = selectedBox.bg === key;
                         const conf = BG_STYLES[key];
@@ -551,10 +599,10 @@ export default function StatusPhotoEditorModal({
                             }`}
                           >
                             <span
-                              className="w-3.5 h-3.5 rounded-full border border-black/20"
+                              className="w-3 h-3 rounded-full border border-black/20 flex-shrink-0"
                               style={{ backgroundColor: conf.bg === 'transparent' ? '#ccc' : conf.bg }}
                             />
-                            <span>{conf.label}</span>
+                            <span className="truncate">{conf.label}</span>
                           </button>
                         );
                       })}
@@ -578,30 +626,54 @@ export default function StatusPhotoEditorModal({
                   </div>
                 </div>
               ) : (
-                <div className="bg-white p-4 rounded-2xl border border-dashed border-border-warm text-center text-xs text-charcoal-light">
-                  Click any badge on the photo to change its text, size, or style.
+                <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-dashed border-border-warm text-center text-xs text-charcoal-light">
+                  Tap any badge on the photo to edit text, size, or style.
                 </div>
               )}
             </div>
 
-            {/* Download Buttons */}
+            {/* Action / Download Buttons */}
             <div className="pt-2 space-y-2">
-              <button
-                type="button"
-                onClick={handleDownloadCurrent}
-                disabled={isExporting}
-                className="w-full flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md disabled:opacity-50"
-              >
-                {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                <span>Download Current Image for Status</span>
-              </button>
+              {canShare ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleShareStatus}
+                    disabled={isExporting}
+                    className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba5a] text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md disabled:opacity-50 active:scale-[0.98]"
+                  >
+                    {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                    <span>Post directly to WhatsApp / Share</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDownloadCurrent}
+                    disabled={isExporting}
+                    className="w-full flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium py-2.5 px-4 rounded-xl text-xs transition-all shadow-xs disabled:opacity-50"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download Image File</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleDownloadCurrent}
+                  disabled={isExporting}
+                  className="w-full flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  <span>Download Current Image for Status</span>
+                </button>
+              )}
 
               {safeImages.length > 1 && (
                 <button
                   type="button"
                   onClick={handleDownloadAll}
                   disabled={isExporting}
-                  className="w-full flex items-center justify-center gap-2 bg-ivory-dark hover:bg-gold/15 text-charcoal hover:text-gold border border-border-warm font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 bg-ivory-dark hover:bg-gold/15 text-charcoal hover:text-gold border border-border-warm font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors disabled:opacity-50 active:scale-[0.98]"
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>Download All {safeImages.length} Status Photos</span>

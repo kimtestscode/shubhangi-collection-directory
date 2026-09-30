@@ -3,17 +3,22 @@ export type ProductType = 'simple' | 'variable' | 'variation';
 
 /** A single inline variant row stored as JSONB on the product */
 export interface InlineVariant {
-  name: string;           // e.g. "Round Floral" or "Red / Small"
+  id?: string;
+  name: string;           // e.g. "Round Floral" or "Round Floral – Small"
+  option_values?: Record<string, string>; // e.g. { "Pattern": "Round Floral" }
   sku: string;
-  barcode: string;
+  barcode?: string;
   price_override: number | null;
   stock: number;
-  image: string;          // single image URL for this variant
+  image?: string;         // backward compat single image
+  images?: string[];      // multiple images for this variant (up to 3)
+  is_active?: boolean;
 }
 
-/** An option type definition, e.g. { type: "Pattern", values: ["Round Floral", "Peacock"] } */
+/** An option type definition, e.g. { name: "Pattern", values: ["Round Floral", "Peacock"] } */
 export interface OptionType {
-  type: string;           // e.g. "Color", "Size", "Pattern"
+  name?: string;           // e.g. "Color", "Size", "Pattern"
+  type?: string;          // backward compat alias for name
   values: string[];       // e.g. ["Round Floral", "Peacock"]
 }
 

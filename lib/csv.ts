@@ -188,10 +188,10 @@ export function generateSampleCSV(): string {
       color: null,
       variant_type: null,
       has_variants: true,
-      option_types: [{ type: 'Color', values: ['Ruby Red', 'Emerald Green'] }],
+      option_types: [{ name: 'Color', type: 'Color', values: ['Ruby Red', 'Emerald Green'] }],
       variants: [
-        { name: 'Ruby Red', sku: 'SC-NK-002-RUB', barcode: '', price_override: 3499, stock: 5, image: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800' },
-        { name: 'Emerald Green', sku: 'SC-NK-002-EME', barcode: '', price_override: 3499, stock: 3, image: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800' },
+        { name: 'Ruby Red', option_values: { Color: 'Ruby Red' }, sku: 'SC-NK-002-RUB', barcode: '', price_override: 3499, stock: 5, images: ['https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800'], image: 'https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=800' },
+        { name: 'Emerald Green', option_values: { Color: 'Emerald Green' }, sku: 'SC-NK-002-EME', barcode: '', price_override: 3499, stock: 3, images: ['https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800'], image: 'https://images.unsplash.com/photo-1617038220319-276d3cfab638?w=800' },
       ],
       regular_price: 4999,
       price: 3499,

@@ -1,11 +1,10 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Product, ProductInsert, CategoryItem, InlineVariant, OptionType } from '@/lib/types';
 import { slugify, CATEGORIES } from '@/lib/utils';
 import ImageUploader from './ImageUploader';
-import Image from 'next/image';
-import { Loader2, Plus, X, Wand2, ImagePlus, CheckSquare, Square } from 'lucide-react';
+import { Loader2, Plus, X, Wand2, Trash2, CheckSquare, Square } from 'lucide-react';
 
 interface Props {
   product?: Product;
@@ -19,7 +18,7 @@ const AVAILABILITY_OPTIONS = [
   { value: 'hidden', label: 'Hidden (not shown publicly)' },
 ];
 
-/** Upload a single file and return its URL */
+/** Upload a single file to /api/upload and return its public URL */
 async function uploadSingleFile(file: File): Promise<string | null> {
   const fd = new FormData();
   fd.append('file', file);
@@ -28,12 +27,48 @@ async function uploadSingleFile(file: File): Promise<string | null> {
   return data.url || null;
 }
 
-/** Cartesian product of arrays */
-function cartesian<T>(arrays: T[][]): T[][] {
-  return arrays.reduce<T[][]>(
-    (acc, arr) => acc.flatMap((prev) => arr.map((val) => [...prev, val])),
-    [[]]
-  );
+interface VariantOptionTypeInput {
+  name: string;
+  valuesText: string;
+}
+
+interface FormVariantRow {
+  _key: string;
+  id?: string;
+  name: string;
+  option_values: Record<string, string>;
+  sku: string;
+  barcode: string;
+  price_override: number | null;
+  stock: number;
+  images: string[];
+  is_active: boolean;
+  _uploading?: boolean;
+}
+
+function generateVariantCombinations(
+  optionTypes: { name: string; values: string[] }[]
+): Record<string, string>[] {
+  return optionTypes.reduce<Record<string, string>[]>((acc, opt) => {
+    if (opt.values.length === 0) return acc;
+    if (acc.length === 0) return opt.values.map(v => ({ [opt.name]: v }));
+    const next: Record<string, string>[] = [];
+    for (const combo of acc) {
+      for (const v of opt.values) next.push({ ...combo, [opt.name]: v });
+    }
+    return next;
+  }, []);
+}
+
+function variantLabel(optionValues: Record<string, string>): string {
+  const vals = Object.values(optionValues);
+  return vals.length > 0 ? vals.join(' – ') : 'Default';
+}
+
+function optionValuesEqual(a: Record<string, string>, b: Record<string, string>): boolean {
+  const aKeys = Object.keys(a), bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every(k => a[k] === b[k]);
 }
 
 export default function ProductForm({ product, mode }: Props) {
@@ -65,18 +100,41 @@ export default function ProductForm({ product, mode }: Props) {
     variants: product?.variants || null,
   });
 
-  // --- Inline variant state ---
-  const [hasVariants, setHasVariants] = useState(product?.has_variants || false);
-  const [optionTypes, setOptionTypes] = useState<{ type: string; valuesStr: string }[]>(
-    product?.option_types?.map(o => ({ type: o.type, valuesStr: o.values.join(', ') })) || [
-      { type: 'Color', valuesStr: '' }
-    ]
-  );
-  const [variantRows, setVariantRows] = useState<InlineVariant[]>(
-    product?.variants || []
-  );
-  const [uploadingVariantIdx, setUploadingVariantIdx] = useState<number | null>(null);
-  const variantImageRefs = useRef<(HTMLInputElement | null)[]>([]);
+  // --- Variant state matching vireka ---
+  const [hasVariants, setHasVariants] = useState(Boolean(product?.has_variants));
+  const [variantOptionTypes, setVariantOptionTypes] = useState<VariantOptionTypeInput[]>(() => {
+    if (product?.option_types && product.option_types.length > 0) {
+      return product.option_types.map(o => ({
+        name: o.name || (o as any).type || '',
+        valuesText: o.values.join(', '),
+      }));
+    }
+    return [{ name: 'Pattern', valuesText: '' }];
+  });
+
+  const [variantRows, setVariantRows] = useState<FormVariantRow[]>(() => {
+    if (product?.variants && product.variants.length > 0) {
+      return product.variants.map((v, i) => {
+        const optionValues = v.option_values || (v.name ? { Option: v.name } : {});
+        const imgs = Array.isArray(v.images) && v.images.length > 0
+          ? v.images
+          : v.image ? [v.image] : [];
+        return {
+          _key: v.id || `var-${i}-${Date.now()}`,
+          id: v.id,
+          name: v.name || variantLabel(optionValues),
+          option_values: optionValues,
+          sku: v.sku || '',
+          barcode: v.barcode || '',
+          price_override: v.price_override ?? null,
+          stock: v.stock ?? 0,
+          images: imgs,
+          is_active: v.is_active ?? true,
+        };
+      });
+    }
+    return [];
+  });
 
   useEffect(() => {
     fetch('/api/categories')
@@ -99,54 +157,79 @@ export default function ProductForm({ product, mode }: Props) {
     set('thumbnail', imgs[0] || '');
   };
 
-  // --- Option type handlers ---
-  const addOptionType = () => setOptionTypes(prev => [...prev, { type: '', valuesStr: '' }]);
-  const removeOptionType = (i: number) => setOptionTypes(prev => prev.filter((_, idx) => idx !== i));
-  const updateOptionType = (i: number, field: 'type' | 'valuesStr', val: string) => {
-    setOptionTypes(prev => prev.map((o, idx) => idx === i ? { ...o, [field]: val } : o));
+  // --- Variant option types handlers ---
+  const addOptionType = () => setVariantOptionTypes(prev => [...prev, { name: '', valuesText: '' }]);
+  const removeOptionType = (i: number) => setVariantOptionTypes(prev => prev.filter((_, idx) => idx !== i));
+  const updateOptionType = (i: number, field: 'name' | 'valuesText', val: string) => {
+    setVariantOptionTypes(prev => prev.map((o, idx) => idx === i ? { ...o, [field]: val } : o));
   };
 
-  // --- Generate variants from option types ---
-  const generateVariants = () => {
-    const parsed: string[][] = optionTypes
-      .filter(o => o.type.trim() && o.valuesStr.trim())
-      .map(o => o.valuesStr.split(',').map(v => v.trim()).filter(Boolean));
+  // --- Generate variants combinations (vireka logic) ---
+  const regenerateVariantRows = () => {
+    const optionTypes = variantOptionTypes
+      .map(t => ({
+        name: t.name.trim(),
+        values: t.valuesText.split(',').map(v => v.trim()).filter(Boolean),
+      }))
+      .filter(t => t.name && t.values.length > 0);
 
-    if (parsed.length === 0) return;
+    if (optionTypes.length === 0) return;
 
-    const combos = cartesian(parsed);
+    const combos = generateVariantCombinations(optionTypes);
     const baseSku = (form.sku || '').toUpperCase();
 
-    const newRows: InlineVariant[] = combos.map(combo => {
-      const name = combo.join(' / ');
-      const suffix = combo.map(v => v.replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase()).join('-');
-      // Preserve existing row data if the variant name already exists
-      const existing = variantRows.find(r => r.name === name);
-      return existing || {
-        name,
-        sku: baseSku ? `${baseSku}-${suffix}` : '',
+    setVariantRows(prev => combos.map(combo => {
+      const existing = prev.find(r => optionValuesEqual(r.option_values, combo));
+      if (existing) return existing;
+
+      const skuSuffix = Object.values(combo)
+        .map(v => v.replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase())
+        .join('-');
+
+      return {
+        _key: `new-${Object.values(combo).join('-')}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        name: variantLabel(combo),
+        option_values: combo,
+        sku: baseSku ? `${baseSku}-${skuSuffix}` : '',
         barcode: '',
         price_override: null,
         stock: 0,
-        image: '',
+        images: [],
+        is_active: true,
       };
-    });
-
-    setVariantRows(newRows);
+    }));
   };
 
-  // --- Variant row handlers ---
-  const updateVariantRow = (i: number, field: keyof InlineVariant, val: string | number | null) => {
-    setVariantRows(prev => prev.map((r, idx) => idx === i ? { ...r, [field]: val } : r));
+  const updateVariantRow = <K extends keyof FormVariantRow>(key: string, field: K, val: FormVariantRow[K]) => {
+    setVariantRows(prev => prev.map(r => r._key === key ? { ...r, [field]: val } : r));
   };
 
-  const handleVariantImageUpload = async (i: number, files: FileList) => {
-    const file = files[0];
+  const removeVariantRow = (key: string) => {
+    setVariantRows(prev => prev.filter(r => r._key !== key));
+  };
+
+  // Upload one photo into next open slot (max 3) for a variant
+  const handleVariantRowImageUpload = async (key: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    setUploadingVariantIdx(i);
+
+    setVariantRows(prev => prev.map(r => r._key === key ? { ...r, _uploading: true } : r));
     const url = await uploadSingleFile(file);
-    if (url) updateVariantRow(i, 'image', url);
-    setUploadingVariantIdx(null);
+
+    setVariantRows(prev => prev.map(r => {
+      if (r._key !== key) return r;
+      const updatedImages = url ? [...r.images, url].slice(0, 3) : r.images;
+      return {
+        ...r,
+        images: updatedImages,
+        _uploading: false,
+      };
+    }));
+    e.target.value = '';
+  };
+
+  const removeVariantRowImage = (key: string, url: string) => {
+    setVariantRows(prev => prev.map(r => r._key === key ? { ...r, images: r.images.filter(i => i !== url) } : r));
   };
 
   // --- Submit ---
@@ -155,10 +238,27 @@ export default function ProductForm({ product, mode }: Props) {
     setSaving(true);
     setError('');
 
-    const parsedOptionTypes: OptionType[] = hasVariants
-      ? optionTypes
-          .filter(o => o.type.trim() && o.valuesStr.trim())
-          .map(o => ({ type: o.type.trim(), values: o.valuesStr.split(',').map(v => v.trim()).filter(Boolean) }))
+    const cleanedOptionTypes: OptionType[] = hasVariants
+      ? variantOptionTypes
+          .filter(o => o.name.trim() && o.valuesText.trim())
+          .map(o => ({
+            name: o.name.trim(),
+            values: o.valuesText.split(',').map(v => v.trim()).filter(Boolean),
+          }))
+      : [];
+
+    const cleanedVariants: InlineVariant[] = hasVariants
+      ? variantRows.map(r => ({
+          name: r.name,
+          option_values: r.option_values,
+          sku: r.sku,
+          barcode: r.barcode,
+          price_override: r.price_override != null && !isNaN(r.price_override) ? Number(r.price_override) : null,
+          stock: Number(r.stock) || 0,
+          images: r.images,
+          image: r.images[0] || '',
+          is_active: r.is_active,
+        }))
       : [];
 
     const payload = {
@@ -166,8 +266,8 @@ export default function ProductForm({ product, mode }: Props) {
       price: form.price != null && String(form.price).trim() !== '' ? Number(form.price) : null,
       regular_price: form.regular_price != null && String(form.regular_price).trim() !== '' ? Number(form.regular_price) : null,
       has_variants: hasVariants,
-      option_types: hasVariants ? parsedOptionTypes : null,
-      variants: hasVariants ? variantRows : null,
+      option_types: hasVariants ? cleanedOptionTypes : null,
+      variants: hasVariants ? cleanedVariants : null,
       parent_sku: null,
       color: null,
       variant_type: null,
@@ -206,13 +306,13 @@ export default function ProductForm({ product, mode }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {field('Product Name *', (
           <input type="text" required value={form.name || ''} onChange={(e) => handleNameChange(e.target.value)}
-            placeholder="e.g. Royal Kundan Necklace Set" className={inputCls} />
+            placeholder="e.g. Royal Meenakari Choker Set" className={inputCls} />
         ))}
 
         {field('SKU / Product Code *', (
           <input type="text" required value={form.sku || ''} onChange={(e) => set('sku', e.target.value.toUpperCase())}
-            placeholder="e.g. SC-NK-001" className={`${inputCls} font-mono`} />
-        ), 'Unique product identifier. Variant SKUs are auto-generated from this.')}
+            placeholder="e.g. KAM-1IEFF" className={`${inputCls} font-mono`} />
+        ), 'Unique product code. Variant SKUs inherit from this base code.')}
 
         {field('Category *', (
           <select value={form.category} onChange={(e) => set('category', e.target.value)} className={inputCls}>
@@ -226,14 +326,14 @@ export default function ProductForm({ product, mode }: Props) {
           </select>
         ))}
 
-        {field('Regular Price / MRP (₹)', (
+        {field('Original Price / MRP (₹)', (
           <input type="number" min="0" step="0.01" value={form.regular_price ?? ''} onChange={(e) => set('regular_price', e.target.value)}
-            placeholder="Original price e.g. 3499" className={inputCls} />
+            placeholder="e.g. 2499" className={inputCls} />
         ))}
 
-        {field('Offer / Sale Price (₹)', (
-          <input type="number" min="0" step="0.01" value={form.price ?? ''} onChange={(e) => set('price', e.target.value)}
-            placeholder="Selling price e.g. 2499" className={inputCls} />
+        {field('Selling Price (₹) *', (
+          <input type="number" min="0" step="0.01" required value={form.price ?? ''} onChange={(e) => set('price', e.target.value)}
+            placeholder="e.g. 1850" className={inputCls} />
         ))}
 
         {field('URL Slug', (
@@ -244,7 +344,7 @@ export default function ProductForm({ product, mode }: Props) {
 
       {field('Description', (
         <textarea rows={3} value={form.description || ''} onChange={(e) => set('description', e.target.value)}
-          placeholder="Describe the product — material, occasion, size, etc." className={inputCls} />
+          placeholder="Describe the product — material, occasion, specifications, etc." className={inputCls} />
       ))}
 
       <label className="flex items-center gap-2 cursor-pointer">
@@ -252,12 +352,11 @@ export default function ProductForm({ product, mode }: Props) {
         <span className="text-sm font-medium text-charcoal">Feature this product (shown at top of catalogue)</span>
       </label>
 
-      {/* ── Variant toggle ── */}
-      <div className="border border-border-warm rounded-2xl overflow-hidden">
-        <button
-          type="button"
+      {/* ── Variant Section matching vireka screenshot ── */}
+      <div className="border border-border-warm rounded-2xl overflow-hidden bg-white shadow-sm">
+        <div
           onClick={() => setHasVariants(v => !v)}
-          className="w-full flex items-center gap-3 px-5 py-4 bg-white hover:bg-ivory transition-colors text-left"
+          className="w-full flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-ivory/50 transition-colors select-none"
         >
           {hasVariants
             ? <CheckSquare className="w-5 h-5 text-gold flex-shrink-0" />
@@ -265,154 +364,220 @@ export default function ProductForm({ product, mode }: Props) {
           }
           <div>
             <p className="text-sm font-semibold text-charcoal">This product has variants (size, color, etc.)</p>
-            <p className="text-xs text-charcoal-light">Define option types and generate variant rows, each with their own SKU, price, stock and image.</p>
+            <p className="text-xs text-charcoal-light">Define option types, generate combinations, and assign individual SKUs, prices, stock, and photos.</p>
           </div>
-        </button>
+        </div>
 
         {hasVariants && (
-          <div className="border-t border-border-warm bg-ivory/40 p-5 space-y-5">
+          <div className="border-t border-border-warm bg-ivory/30 p-5 space-y-5">
 
-            {/* Option Types */}
+            {/* Option Types (vireka layout) */}
             <div className="space-y-3">
               <p className="text-xs font-bold uppercase tracking-wider text-charcoal-light">Option Types</p>
-              {optionTypes.map((opt, i) => (
-                <div key={i} className="flex items-center gap-2">
+              {variantOptionTypes.map((opt, idx) => (
+                <div key={idx} className="flex items-center gap-2">
                   <input
-                    type="text"
-                    value={opt.type}
-                    onChange={(e) => updateOptionType(i, 'type', e.target.value)}
-                    placeholder="Type (e.g. Color)"
-                    className="w-36 border border-border-warm rounded-xl px-3 py-2 text-sm text-charcoal focus:outline-none focus:border-gold bg-white"
+                    placeholder="Option name (e.g. Pattern)"
+                    value={opt.name}
+                    onChange={e => updateOptionType(idx, 'name', e.target.value)}
+                    className="w-36 px-3 py-2 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold"
                   />
                   <input
-                    type="text"
-                    value={opt.valuesStr}
-                    onChange={(e) => updateOptionType(i, 'valuesStr', e.target.value)}
-                    placeholder="Values, comma separated (e.g. Red, Blue, Gold)"
-                    className="flex-1 border border-border-warm rounded-xl px-3 py-2 text-sm text-charcoal focus:outline-none focus:border-gold bg-white"
+                    placeholder="Values, comma separated (e.g. Round Floral, Peacock)"
+                    value={opt.valuesText}
+                    onChange={e => updateOptionType(idx, 'valuesText', e.target.value)}
+                    className="flex-1 px-3 py-2 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold"
                   />
-                  {optionTypes.length > 1 && (
-                    <button type="button" onClick={() => removeOptionType(i)}
-                      className="p-1.5 text-charcoal-light hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">
+                  {variantOptionTypes.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeOptionType(idx)}
+                      className="p-1.5 text-charcoal-light hover:text-red-500 rounded-lg transition-colors"
+                      title="Remove option type"
+                    >
                       <X className="w-4 h-4" />
                     </button>
                   )}
                 </div>
               ))}
-              <button type="button" onClick={addOptionType}
-                className="flex items-center gap-1.5 text-xs font-medium text-gold hover:text-gold/80 transition-colors">
-                <Plus className="w-3.5 h-3.5" />
-                Add Option Type
+
+              <button
+                type="button"
+                onClick={addOptionType}
+                className="text-gold text-xs font-semibold hover:underline flex items-center gap-1"
+              >
+                + Add Option Type
               </button>
             </div>
 
-            {/* Generate button */}
+            {/* Generate Variants button */}
             <button
               type="button"
-              onClick={generateVariants}
-              className="flex items-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+              onClick={regenerateVariantRows}
+              className="flex items-center gap-2 border border-gold/60 text-gold hover:bg-gold/10 text-xs font-semibold px-4 py-2 rounded-xl transition-colors bg-white shadow-sm"
             >
-              <Wand2 className="w-4 h-4" />
+              <Wand2 className="w-3.5 h-3.5 text-gold" />
               Generate Variants
             </button>
 
-            {/* Variants table */}
+            {/* Variants table (vireka layout & columns) */}
             {variantRows.length > 0 && (
               <div className="overflow-x-auto rounded-xl border border-border-warm bg-white shadow-sm">
-                <table className="w-full text-xs min-w-[700px]">
+                <table className="w-full text-xs min-w-[760px]">
                   <thead>
                     <tr className="bg-ivory-dark border-b border-border-warm">
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-36">Variant</th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-36">SKU</th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-32">Barcode</th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-32">Price Override (₹)</th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-24">Stock</th>
-                      <th className="px-3 py-2.5 text-left font-semibold text-charcoal-light w-28">Image</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light">Variant</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light">SKU</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light">Barcode</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light">Price Override</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light">Stock</th>
+                      <th className="text-left py-2.5 px-3 font-semibold text-charcoal-light min-w-[140px]">Image URL</th>
+                      <th className="text-center py-2.5 px-3 font-semibold text-charcoal-light">Active</th>
+                      <th className="py-2.5 px-2"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border-warm">
-                    {variantRows.map((row, i) => (
-                      <tr key={i} className="hover:bg-ivory/50 transition-colors">
-                        {/* Name */}
-                        <td className="px-3 py-2.5">
-                          <span className="font-medium text-charcoal">{row.name}</span>
+                    {variantRows.map((row) => (
+                      <tr key={row._key} className="hover:bg-ivory/40 transition-colors">
+                        {/* Variant label */}
+                        <td className="py-2.5 px-3 font-semibold text-charcoal whitespace-nowrap">
+                          {row.name}
                         </td>
+
                         {/* SKU */}
-                        <td className="px-3 py-2.5">
-                          <input type="text" value={row.sku}
-                            onChange={(e) => updateVariantRow(i, 'sku', e.target.value.toUpperCase())}
-                            className={`${cellInputCls} font-mono`} placeholder="AUTO-SKU" />
+                        <td className="py-2.5 px-3">
+                          <input
+                            type="text"
+                            value={row.sku}
+                            onChange={e => updateVariantRow(row._key, 'sku', e.target.value.toUpperCase())}
+                            className={`${cellInputCls} font-mono w-32`}
+                            placeholder="SKU"
+                          />
                         </td>
+
                         {/* Barcode */}
-                        <td className="px-3 py-2.5">
-                          <input type="text" value={row.barcode}
-                            onChange={(e) => updateVariantRow(i, 'barcode', e.target.value)}
-                            className={cellInputCls} placeholder="Optional" />
+                        <td className="py-2.5 px-3">
+                          <input
+                            type="text"
+                            value={row.barcode}
+                            onChange={e => updateVariantRow(row._key, 'barcode', e.target.value)}
+                            className={`${cellInputCls} font-mono w-28`}
+                            placeholder="Barcode"
+                          />
                         </td>
+
                         {/* Price Override */}
-                        <td className="px-3 py-2.5">
-                          <input type="number" min="0" step="0.01"
+                        <td className="py-2.5 px-3">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
                             value={row.price_override ?? ''}
-                            onChange={(e) => updateVariantRow(i, 'price_override', e.target.value === '' ? null : Number(e.target.value))}
-                            className={cellInputCls} placeholder="Use base price" />
+                            onChange={e => updateVariantRow(row._key, 'price_override', e.target.value === '' ? null : Number(e.target.value))}
+                            placeholder={form.price ? `₹${form.price}` : '0'}
+                            className={`${cellInputCls} w-24`}
+                          />
                         </td>
+
                         {/* Stock */}
-                        <td className="px-3 py-2.5">
-                          <input type="number" min="0"
+                        <td className="py-2.5 px-3">
+                          <input
+                            type="number"
+                            min="0"
                             value={row.stock}
-                            onChange={(e) => updateVariantRow(i, 'stock', Number(e.target.value))}
-                            className={cellInputCls} />
+                            onChange={e => updateVariantRow(row._key, 'stock', Number(e.target.value))}
+                            className={`${cellInputCls} w-16`}
+                          />
                         </td>
-                        {/* Image */}
-                        <td className="px-3 py-2.5">
-                          <div className="flex items-center gap-2">
-                            {row.image ? (
-                              <div className="relative w-9 h-9 rounded-lg overflow-hidden border border-border-warm flex-shrink-0 group">
-                                <Image src={row.image} alt={row.name} fill className="object-cover" sizes="36px" />
-                                <button type="button" onClick={() => updateVariantRow(i, 'image', '')}
-                                  className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                  <X className="w-3 h-3 text-white" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="w-9 h-9 rounded-lg border-2 border-dashed border-border-warm bg-ivory flex-shrink-0" />
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => variantImageRefs.current[i]?.click()}
-                              disabled={uploadingVariantIdx === i}
-                              className="flex items-center justify-center w-7 h-7 rounded-lg border border-border-warm bg-white hover:border-gold hover:text-gold text-charcoal-light transition-colors disabled:opacity-50"
-                              title="Upload image for this variant"
-                            >
-                              {uploadingVariantIdx === i
-                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                : <ImagePlus className="w-3.5 h-3.5" />
+
+                        {/* Image URL Slots (max 3 slots, vireka pattern) */}
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-1.5">
+                            {[0, 1, 2].map((slot) => {
+                              const url = row.images[slot];
+                              if (url) {
+                                return (
+                                  <div key={slot} className="relative group w-8 h-8 rounded-lg overflow-hidden border border-border-warm flex-shrink-0 bg-white">
+                                    <img src={url} alt="" className="w-full h-full object-cover" />
+                                    <button
+                                      type="button"
+                                      onClick={() => removeVariantRowImage(row._key, url)}
+                                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Remove photo"
+                                    >
+                                      <X className="w-2.5 h-2.5 text-white" />
+                                    </button>
+                                  </div>
+                                );
                               }
-                            </button>
-                            <input
-                              type="file" accept="image/*" className="hidden"
-                              ref={(el) => { variantImageRefs.current[i] = el; }}
-                              onChange={(e) => e.target.files && handleVariantImageUpload(i, e.target.files)}
-                            />
+
+                              // Only the next open slot is an active upload button
+                              if (slot === row.images.length) {
+                                return (
+                                  <label
+                                    key={slot}
+                                    className={`w-8 h-8 border border-dashed border-border-warm rounded-lg flex items-center justify-center cursor-pointer hover:border-gold hover:text-gold text-charcoal-light transition-colors flex-shrink-0 bg-white ${row._uploading ? 'opacity-50 pointer-events-none' : ''}`}
+                                    title="Add photo for this variant"
+                                  >
+                                    {row._uploading
+                                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-gold" />
+                                      : <Plus className="w-3.5 h-3.5" />
+                                    }
+                                    <input
+                                      type="file"
+                                      accept="image/jpeg,image/jpg,image/png,image/webp"
+                                      className="hidden"
+                                      onChange={e => handleVariantRowImageUpload(row._key, e)}
+                                      disabled={row._uploading}
+                                    />
+                                  </label>
+                                );
+                              }
+
+                              return <div key={slot} className="w-8 h-8 flex-shrink-0" />;
+                            })}
                           </div>
+                        </td>
+
+                        {/* Active checkbox */}
+                        <td className="py-2.5 px-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={row.is_active}
+                            onChange={e => updateVariantRow(row._key, 'is_active', e.target.checked)}
+                            className="w-4 h-4 accent-gold cursor-pointer"
+                          />
+                        </td>
+
+                        {/* Delete row */}
+                        <td className="py-2.5 px-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeVariantRow(row._key)}
+                            className="text-charcoal-light hover:text-red-500 p-1 rounded transition-colors"
+                            title="Delete this variant"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-                <p className="text-[11px] text-charcoal-light px-4 py-2.5 border-t border-border-warm bg-ivory/30">
-                  Price Override is optional — leave blank to use the base price above.
-                </p>
               </div>
             )}
+
+            <p className="text-[11px] text-charcoal-light">
+              Price Override is optional — leave blank to use the base price above. Base Stock Qty is ignored once variants are generated; each variant tracks its own stock.
+            </p>
           </div>
         )}
       </div>
 
-      {/* Product-level images (shown when no inline variants, or as fallback) */}
-      {field(hasVariants ? 'Product Images (used as fallback / cover)' : 'Product Images', (
+      {/* Product-level images (cover / fallback) */}
+      {field(hasVariants ? 'Product Images (cover & fallback gallery)' : 'Product Images', (
         <ImageUploader images={form.images || []} onChange={handleImagesChange} />
-      ), 'First image is the thumbnail shown in the catalogue.')}
+      ), 'First image is the primary thumbnail shown in the catalogue.')}
 
       {error && <p className="text-red-600 text-sm">{error}</p>}
 

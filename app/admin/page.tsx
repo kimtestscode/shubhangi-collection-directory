@@ -4,13 +4,14 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { 
   Plus, Edit, Trash2, AlertCircle, Download, Upload, SlidersHorizontal, 
-  Save, X, Check, Loader2, CheckSquare, Square, ChevronDown, ChevronRight, Layers, ImagePlus
+  Save, X, Check, Loader2, CheckSquare, Square, ChevronDown, ChevronRight, Layers, ImagePlus, Sparkles
 } from 'lucide-react';
 import { Product, ProductType, Availability, CategoryItem, InlineVariant } from '@/lib/types';
 import { exportProductsToCSV } from '@/lib/csv';
 import { CATEGORIES } from '@/lib/utils';
 import AvailabilityBadge from '@/components/shared/AvailabilityBadge';
 import CSVImportModal from '@/components/admin/CSVImportModal';
+import StatusPhotoEditorModal from '@/components/admin/StatusPhotoEditorModal';
 import PriceDisplay from '@/components/shared/PriceDisplay';
 
 async function uploadFile(file: File): Promise<string | null> {
@@ -37,6 +38,7 @@ export default function AdminProductsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [bulkAction, setBulkAction] = useState('');
   const [uploadingVariantKey, setUploadingVariantKey] = useState<string | null>(null);
+  const [statusEditorProduct, setStatusEditorProduct] = useState<Product | null>(null);
 
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -776,6 +778,15 @@ export default function AdminProductsPage() {
                     {!isBulkEditMode && (
                       <td className="px-4 py-3 text-right align-top">
                         <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setStatusEditorProduct(p)}
+                            className="p-1.5 text-charcoal-light hover:text-gold rounded-lg hover:bg-gold/10 transition-colors"
+                            aria-label="Create Status Photo"
+                            title="Create WhatsApp Status Image with Price Badge"
+                          >
+                            <Sparkles className="w-4 h-4 text-gold" />
+                          </button>
                           <Link
                             href={`/admin/products/${p.id}/edit`}
                             className="p-1.5 text-charcoal-light hover:text-gold rounded-lg hover:bg-gold/10 transition-colors"
@@ -1056,6 +1067,22 @@ export default function AdminProductsPage() {
         onClose={() => setIsImportModalOpen(false)}
         onImportComplete={load}
       />
+
+      {/* WhatsApp Status Photo Editor Modal */}
+      {statusEditorProduct && (
+        <StatusPhotoEditorModal
+          isOpen={Boolean(statusEditorProduct)}
+          onClose={() => setStatusEditorProduct(null)}
+          images={Array.from(new Set([
+            ...(statusEditorProduct.images || []),
+            ...(statusEditorProduct.thumbnail ? [statusEditorProduct.thumbnail] : []),
+            ...(statusEditorProduct.variants?.flatMap(v => Array.isArray(v.images) ? v.images : v.image ? [v.image] : []) || [])
+          ])).filter(Boolean)}
+          productName={statusEditorProduct.name}
+          price={statusEditorProduct.price}
+          regularPrice={statusEditorProduct.regular_price}
+        />
+      )}
     </div>
   );
 }

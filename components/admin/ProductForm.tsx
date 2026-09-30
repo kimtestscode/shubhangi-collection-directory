@@ -1,10 +1,11 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Product, ProductInsert, CategoryItem, InlineVariant, OptionType } from '@/lib/types';
 import { slugify, CATEGORIES } from '@/lib/utils';
 import ImageUploader from './ImageUploader';
-import { Loader2, Plus, X, Wand2, Trash2, CheckSquare, Square } from 'lucide-react';
+import StatusPhotoEditorModal from './StatusPhotoEditorModal';
+import { Loader2, Plus, X, Wand2, Trash2, CheckSquare, Square, Sparkles } from 'lucide-react';
 
 interface Props {
   product?: Product;
@@ -135,6 +136,15 @@ export default function ProductForm({ product, mode }: Props) {
     }
     return [];
   });
+
+  const [isStatusEditorOpen, setIsStatusEditorOpen] = useState(false);
+
+  const allStatusImages = useMemo(() => {
+    const mainImages = form.images || [];
+    const variantImgs = variantRows.flatMap(v => Array.isArray(v.images) ? v.images : []);
+    const initialImgs = product?.images || [];
+    return Array.from(new Set([...mainImages, ...initialImgs, ...variantImgs])).filter(Boolean);
+  }, [form.images, variantRows, product?.images]);
 
   useEffect(() => {
     fetch('/api/categories')
@@ -581,17 +591,39 @@ export default function ProductForm({ product, mode }: Props) {
 
       {error && <p className="text-red-600 text-sm">{error}</p>}
 
-      <div className="flex gap-3 pt-2">
+      <div className="flex gap-3 pt-2 flex-wrap items-center">
         <button type="submit" disabled={saving}
           className="flex items-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />}
           {saving ? 'Saving...' : mode === 'create' ? 'Add Product' : 'Save Changes'}
         </button>
+
+        <button
+          type="button"
+          onClick={() => setIsStatusEditorOpen(true)}
+          disabled={allStatusImages.length === 0}
+          className="flex items-center gap-2 border-2 border-gold text-gold hover:bg-gold hover:text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all disabled:opacity-40 disabled:pointer-events-none shadow-xs"
+          title="Create WhatsApp Status images with price & details stickers"
+        >
+          <Sparkles className="w-4 h-4" />
+          <span>Photo Edit for Status</span>
+        </button>
+
         <button type="button" onClick={() => router.back()}
           className="border border-border-warm text-charcoal hover:border-gold hover:text-gold px-6 py-2.5 rounded-xl text-sm font-medium transition-colors">
           Cancel
         </button>
       </div>
+
+      {/* WhatsApp Status Photo Editor Modal */}
+      <StatusPhotoEditorModal
+        isOpen={isStatusEditorOpen}
+        onClose={() => setIsStatusEditorOpen(false)}
+        images={allStatusImages}
+        productName={form.name || ''}
+        price={form.price != null ? Number(form.price) : null}
+        regularPrice={form.regular_price != null ? Number(form.regular_price) : null}
+      />
     </form>
   );
 }

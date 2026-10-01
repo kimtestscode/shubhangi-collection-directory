@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Download, Plus, Trash2, Move, Sparkles, Image as ImageIcon, Layers, RefreshCw, Loader2, Share2 } from 'lucide-react';
+import { X, Download, Plus, Trash2, Move, Sparkles, Image as ImageIcon, Layers, RefreshCw, Loader2, Share2, Languages } from 'lucide-react';
+import { useLanguage } from '@/lib/languageContext';
 
 export interface TextBox {
   id: string;
@@ -20,12 +21,12 @@ interface Props {
   regularPrice?: number | null;
 }
 
-const BG_STYLES: Record<TextBox['bg'], { bg: string; text: string; label: string }> = {
-  black: { bg: 'rgba(0, 0, 0, 0.88)', text: '#ffffff', label: 'Black Pill' },
-  white: { bg: 'rgba(255, 255, 255, 0.95)', text: '#111827', label: 'White Pill' },
-  gold: { bg: 'rgba(180, 130, 40, 0.95)', text: '#ffffff', label: 'Gold Pill' },
-  crimson: { bg: 'rgba(185, 28, 28, 0.92)', text: '#ffffff', label: 'Crimson' },
-  none: { bg: 'transparent', text: '#ffffff', label: 'No Background' },
+const BG_STYLES: Record<TextBox['bg'], { bg: string; text: string; labelEn: string; labelMr: string }> = {
+  black: { bg: 'rgba(0, 0, 0, 0.88)', text: '#ffffff', labelEn: 'Black Pill', labelMr: 'काळा' },
+  white: { bg: 'rgba(255, 255, 255, 0.95)', text: '#111827', labelEn: 'White Pill', labelMr: 'पांढरा' },
+  gold: { bg: 'rgba(180, 130, 40, 0.95)', text: '#ffffff', labelEn: 'Gold Pill', labelMr: 'सोनेरी' },
+  crimson: { bg: 'rgba(185, 28, 28, 0.92)', text: '#ffffff', labelEn: 'Crimson', labelMr: 'लाल' },
+  none: { bg: 'transparent', text: '#ffffff', labelEn: 'No Background', labelMr: 'पारदर्शक' },
 };
 
 export default function StatusPhotoEditorModal({
@@ -36,6 +37,8 @@ export default function StatusPhotoEditorModal({
   price,
   regularPrice,
 }: Props) {
+  const { lang } = useLanguage();
+  const isMr = lang === 'mr';
   const safeImages = images.filter(Boolean);
   const [activeImgIdx, setActiveImgIdx] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
@@ -375,10 +378,12 @@ export default function StatusPhotoEditorModal({
             </div>
             <div className="min-w-0">
               <h2 className="text-sm sm:text-base font-semibold text-charcoal truncate">
-                WhatsApp Status Photo Editor
+                {isMr ? 'व्हॉट्सॲप स्टेटस फोटो एडिटर' : 'WhatsApp Status Photo Editor'}
               </h2>
               <p className="text-[11px] sm:text-xs text-charcoal-light hidden sm:block truncate">
-                Drag price & details badges over your photo, then download or share directly to Status
+                {isMr
+                  ? 'फोटोंवर किमतीचा स्टिकर ओढून ठेवा आणि थेट स्टेटसवर पोस्ट करा'
+                  : 'Drag price & details badges over your photo, then download or share directly to Status'}
               </p>
             </div>
           </div>
@@ -460,7 +465,7 @@ export default function StatusPhotoEditorModal({
 
               <div className="absolute bottom-2 left-2 pointer-events-none bg-black/60 backdrop-blur-xs text-white/90 text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1">
                 <Move className="w-3 h-3" />
-                <span>Drag badges to reposition</span>
+                <span>{isMr ? 'स्टिकर बोटाने/माउसने हवा तिथे ओढा' : 'Drag badges to reposition'}</span>
               </div>
             </div>
 
@@ -489,7 +494,7 @@ export default function StatusPhotoEditorModal({
               {/* Quick Presets (One-click add) */}
               <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-border-warm shadow-xs space-y-2">
                 <p className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-charcoal">
-                  Quick Story Badges
+                  {isMr ? 'क्विक स्टेटस स्टिकर्स (Quick Badges)' : 'Quick Story Badges'}
                 </p>
                 <div className="flex flex-wrap gap-1.5">
                   {price && (
@@ -519,17 +524,17 @@ export default function StatusPhotoEditorModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => addTextBox('Limited Stock')}
+                    onClick={() => addTextBox(isMr ? 'मर्यादित स्टॉक (Limited Stock)' : 'Limited Stock')}
                     className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
-                    + Limited Stock
+                    + {isMr ? 'मर्यादित स्टॉक' : 'Limited Stock'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => addTextBox('Ready to Dispatch')}
+                    onClick={() => addTextBox(isMr ? 'डिलिव्हरीसाठी तयार (Ready)' : 'Ready to Dispatch')}
                     className="px-2.5 py-1 text-xs font-semibold bg-ivory-dark hover:bg-gold/15 hover:text-gold border border-border-warm rounded-lg transition-colors text-charcoal active:scale-95"
                   >
-                    + Ready to Dispatch
+                    + {isMr ? 'तयार स्टॉक' : 'Ready to Dispatch'}
                   </button>
                   <button
                     type="button"
@@ -543,7 +548,7 @@ export default function StatusPhotoEditorModal({
                     onClick={() => addTextBox()}
                     className="px-2.5 py-1 text-xs font-semibold text-gold border border-gold/40 hover:bg-gold/10 rounded-lg transition-colors flex items-center gap-1 active:scale-95"
                   >
-                    <Plus className="w-3 h-3" /> Custom Text
+                    <Plus className="w-3 h-3" /> {isMr ? 'स्वतःचा मजकूर' : 'Custom Text'}
                   </button>
                 </div>
               </div>
@@ -553,7 +558,7 @@ export default function StatusPhotoEditorModal({
                 <div className="bg-white p-3.5 sm:p-4 rounded-2xl border-2 border-gold/40 shadow-xs space-y-3.5 sm:space-y-4">
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-gold flex items-center gap-1">
-                      <span>Edit Selected Badge</span>
+                      <span>{isMr ? 'निवडलेला स्टिकर बदला' : 'Edit Selected Badge'}</span>
                     </p>
                     <button
                       type="button"
@@ -561,13 +566,13 @@ export default function StatusPhotoEditorModal({
                       className="text-red-500 hover:text-red-700 text-xs flex items-center gap-1 font-medium p-1"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Delete
+                      {isMr ? 'काढून टाका' : 'Delete'}
                     </button>
                   </div>
 
                   <div>
                     <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
-                      Badge Text (press Enter for multiple lines)
+                      {isMr ? 'मजकूर (नवीन ओळीसाठी Enter दाबा)' : 'Badge Text (press Enter for multiple lines)'}
                     </label>
                     <textarea
                       rows={2}
@@ -581,7 +586,7 @@ export default function StatusPhotoEditorModal({
                   {/* Badge Pill Style */}
                   <div>
                     <label className="text-[11px] font-semibold text-charcoal-light block mb-1.5">
-                      Pill Background Style
+                      {isMr ? 'स्टिकरचा रंग (Background Style)' : 'Pill Background Style'}
                     </label>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 sm:gap-2">
                       {(Object.keys(BG_STYLES) as TextBox['bg'][]).map((key) => {
@@ -602,7 +607,7 @@ export default function StatusPhotoEditorModal({
                               className="w-3 h-3 rounded-full border border-black/20 flex-shrink-0"
                               style={{ backgroundColor: conf.bg === 'transparent' ? '#ccc' : conf.bg }}
                             />
-                            <span className="truncate">{conf.label}</span>
+                            <span className="truncate">{isMr ? conf.labelMr : conf.labelEn}</span>
                           </button>
                         );
                       })}
@@ -612,7 +617,7 @@ export default function StatusPhotoEditorModal({
                   {/* Size slider */}
                   <div>
                     <div className="flex items-center justify-between text-[11px] font-semibold text-charcoal-light mb-1">
-                      <span>Font Size</span>
+                      <span>{isMr ? 'फॉन्ट साईझ' : 'Font Size'}</span>
                       <span className="font-mono">{selectedBox.fontSize}px</span>
                     </div>
                     <input
@@ -627,7 +632,9 @@ export default function StatusPhotoEditorModal({
                 </div>
               ) : (
                 <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-dashed border-border-warm text-center text-xs text-charcoal-light">
-                  Tap any badge on the photo to edit text, size, or style.
+                  {isMr
+                    ? 'फोटोवरील कोणत्याही स्टिकरवर क्लिक करून तो बदला किंवा नवीन जोडा.'
+                    : 'Tap any badge on the photo to edit text, size, or style.'}
                 </div>
               )}
             </div>
@@ -643,7 +650,7 @@ export default function StatusPhotoEditorModal({
                     className="w-full flex items-center justify-center gap-2 bg-[#25D366] hover:bg-[#20ba5a] text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md disabled:opacity-50 active:scale-[0.98]"
                   >
                     {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
-                    <span>Post directly to WhatsApp / Share</span>
+                    <span>{isMr ? 'थेट व्हॉट्सॲप स्टेटसवर ठेवा / Share' : 'Post directly to WhatsApp / Share'}</span>
                   </button>
 
                   <button
@@ -653,7 +660,7 @@ export default function StatusPhotoEditorModal({
                     className="w-full flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium py-2.5 px-4 rounded-xl text-xs transition-all shadow-xs disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    <span>Download Image File</span>
+                    <span>{isMr ? 'फोटो डाऊनलोड करा' : 'Download Image File'}</span>
                   </button>
                 </>
               ) : (
@@ -664,7 +671,7 @@ export default function StatusPhotoEditorModal({
                   className="w-full flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-semibold py-3 px-4 rounded-xl text-sm transition-all shadow-md disabled:opacity-50 active:scale-[0.98]"
                 >
                   {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  <span>Download Current Image for Status</span>
+                  <span>{isMr ? 'स्टेटस फोटो डाऊनलोड करा' : 'Download Current Image for Status'}</span>
                 </button>
               )}
 
@@ -676,7 +683,11 @@ export default function StatusPhotoEditorModal({
                   className="w-full flex items-center justify-center gap-2 bg-ivory-dark hover:bg-gold/15 text-charcoal hover:text-gold border border-border-warm font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors disabled:opacity-50 active:scale-[0.98]"
                 >
                   <Layers className="w-3.5 h-3.5" />
-                  <span>Download All {safeImages.length} Status Photos</span>
+                  <span>
+                    {isMr
+                      ? `सर्व ${safeImages.length} फोटो डाऊनलोड करा`
+                      : `Download All ${safeImages.length} Status Photos`}
+                  </span>
                 </button>
               )}
             </div>

@@ -6,6 +6,7 @@ import { slugify, CATEGORIES } from '@/lib/utils';
 import ImageUploader from './ImageUploader';
 import StatusPhotoEditorModal from './StatusPhotoEditorModal';
 import { Loader2, Plus, X, Wand2, Trash2, CheckSquare, Square, Sparkles } from 'lucide-react';
+import { useLanguage } from '@/lib/languageContext';
 
 interface Props {
   product?: Product;
@@ -74,6 +75,8 @@ function optionValuesEqual(a: Record<string, string>, b: Record<string, string>)
 
 export default function ProductForm({ product, mode }: Props) {
   const router = useRouter();
+  const { lang, t } = useLanguage();
+  const isMr = lang === 'mr';
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [categories, setCategories] = useState<string[]>(CATEGORIES.filter(c => c !== 'All'));
@@ -595,7 +598,11 @@ export default function ProductForm({ product, mode }: Props) {
         <button type="submit" disabled={saving}
           className="flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-medium px-5 sm:px-6 py-2.5 rounded-xl transition-colors disabled:opacity-50 text-sm">
           {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-          {saving ? 'Saving...' : mode === 'create' ? 'Add Product' : 'Save Changes'}
+          {saving
+            ? (isMr ? 'सेव्ह होत आहे...' : 'Saving...')
+            : mode === 'create'
+            ? (isMr ? 'उत्पादन जोडा' : 'Add Product')
+            : (isMr ? 'बदल सेव्ह करा' : 'Save Changes')}
         </button>
 
         <button
@@ -606,12 +613,12 @@ export default function ProductForm({ product, mode }: Props) {
           title="Create WhatsApp Status images with price & details stickers"
         >
           <Sparkles className="w-4 h-4" />
-          <span>Photo Edit for Status</span>
+          <span>{isMr ? 'स्टेटस फोटो एडिटर' : 'Photo Edit for Status'}</span>
         </button>
 
         <button type="button" onClick={() => router.back()}
           className="border border-border-warm text-charcoal hover:border-gold hover:text-gold px-5 sm:px-6 py-2.5 rounded-xl text-sm font-medium transition-colors">
-          Cancel
+          {isMr ? 'रद्द करा' : 'Cancel'}
         </button>
       </div>
 

@@ -27,6 +27,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { LanguageProvider } from '@/lib/languageContext';
+
 export default function RootLayout({
   children,
 }: {
@@ -35,7 +37,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${cormorant.variable}`}>
       <body className="min-h-screen bg-ivory text-charcoal antialiased">
-        {children}
+        <LanguageProvider>
+          {children}
+        </LanguageProvider>
       </body>
     </html>
   );

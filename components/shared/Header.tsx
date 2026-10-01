@@ -1,10 +1,12 @@
 'use client';
 import Link from 'next/link';
-import { ShoppingBag, Menu, X } from 'lucide-react';
+import { ShoppingBag, Menu, X, Languages } from 'lucide-react';
 import { useState } from 'react';
+import { useLanguage } from '@/lib/languageContext';
 
 export default function Header() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { lang, toggleLang } = useLanguage();
 
   return (
     <header className="sticky top-0 z-50 bg-ivory/95 backdrop-blur-sm border-b border-border-warm no-print">
@@ -36,6 +38,15 @@ export default function Header() {
             >
               Contact
             </a>
+            <button
+              type="button"
+              onClick={toggleLang}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-gold/40 text-gold hover:bg-gold hover:text-white transition-all shadow-2xs"
+              title="Switch Language / भाषा बदला"
+            >
+              <Languages className="w-3.5 h-3.5" />
+              <span>{lang === 'en' ? 'मराठी' : 'English'}</span>
+            </button>
           </nav>
 
           {/* Mobile menu button */}
@@ -66,6 +77,16 @@ export default function Header() {
             >
               Contact Us on WhatsApp
             </a>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={toggleLang}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold border border-gold/40 text-gold hover:bg-gold hover:text-white transition-all w-full justify-center"
+              >
+                <Languages className="w-4 h-4" />
+                <span>भाषा बदला / Switch to {lang === 'en' ? 'मराठी' : 'English'}</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

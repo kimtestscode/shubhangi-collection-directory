@@ -27,10 +27,9 @@ const PRINT_FONT: React.CSSProperties = {
   color: '#000',
 };
 
-// ~9mm square, matching the size marked on the reference screenshot (≈13% of the label width).
-// The payload is only the 5-6 digit order number, which encodes as the smallest QR version (21x21
-// modules), so even at this size each module is ~0.4mm and scans fine from a laser print.
-const QR_SIZE_PX = 34;
+// ~12.5mm square, spanning from the top of ORDER NO. down till the "To," line ends,
+// as shown in the reference screenshot. Encodes only the clean 4+ digit order number.
+const QR_SIZE_PX = 46;
 
 // ─── Address block (shared by measurement + print) ───────────────────────────
 
@@ -49,21 +48,17 @@ function AddressBlock({ order }: { order: Order }) {
         breakInside: 'avoid',
         pageBreakInside: 'avoid',
         boxSizing: 'border-box',
+        display: 'flow-root',
       }}
     >
-      {/* Order heading + scan QR */}
+      {/* Scan QR placed at the top-right, spanning from ORDER NO down till "To," ends */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '6pt',
+          float: 'right',
+          marginLeft: '6pt',
           marginBottom: '2pt',
         }}
       >
-        <div style={{ fontWeight: 700, fontSize: '11.5pt', minWidth: 0 }}>
-          ORDER NO. {order.orderNumber}
-        </div>
         <QRCodeSVG
           value={normalizeOrderNumber(order.orderNumber)}
           size={QR_SIZE_PX}
@@ -71,8 +66,12 @@ function AddressBlock({ order }: { order: Order }) {
           marginSize={1}
           bgColor="#ffffff"
           fgColor="#000000"
-          style={{ flexShrink: 0 }}
         />
+      </div>
+
+      {/* Order heading */}
+      <div style={{ fontWeight: 700, marginBottom: '2pt', fontSize: '11.5pt' }}>
+        ORDER NO. {order.orderNumber}
       </div>
 
       {/* To section */}

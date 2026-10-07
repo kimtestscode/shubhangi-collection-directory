@@ -22,11 +22,25 @@ export default function ShippingPrinterApp() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
 
+  async function syncOrdersToMaster(ordersToSync: Order[]) {
+    if (!ordersToSync.length) return;
+    try {
+      await fetch('/api/shipping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_orders', orders: ordersToSync }),
+      });
+    } catch (err) {
+      console.error('Failed to sync orders to shipping master:', err);
+    }
+  }
+
   function handleGenerate() {
     if (!rawInput.trim()) return;
     const result = parseWhatsAppBatch(rawInput);
     setParseResult(result);
     setOrders(result.orders);
+    syncOrdersToMaster(result.orders);
     setScreen('review');
   }
 
@@ -47,6 +61,11 @@ export default function ShippingPrinterApp() {
     }
   }
 
+  function handleProceedToPrint() {
+    syncOrdersToMaster(orders);
+    setScreen('print');
+  }
+
   if (screen === 'review' && parseResult) {
     return (
       <ReviewScreen
@@ -54,7 +73,7 @@ export default function ShippingPrinterApp() {
         preamble={parseResult.preamble}
         duplicates={parseResult.duplicates}
         onOrdersChange={setOrders}
-        onProceedToPrint={() => setScreen('print')}
+        onProceedToPrint={handleProceedToPrint}
         onBack={() => setScreen('input')}
       />
     );

@@ -41,3 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# customer reference files / exports
+*.pdf
+Qr representation_*.png

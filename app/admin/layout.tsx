@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { ShoppingBag, Package, Plus, LogOut, Menu, X, ExternalLink, Tags, Printer, HelpCircle, Languages } from 'lucide-react';
+import { ShoppingBag, Package, Plus, LogOut, Menu, X, ExternalLink, Tags, Printer, HelpCircle, Languages, QrCode, ScanLine } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -21,6 +21,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/categories', label: lang === 'mr' ? 'कॅटेगरी' : 'Categories', icon: Tags },
     { href: '/admin/products/new', label: lang === 'mr' ? 'नवीन उत्पादन जोडा' : 'Add Product', icon: Plus },
     { href: '/admin/address-printer', label: lang === 'mr' ? 'पत्ता प्रिंटर' : 'Address Printer', icon: Printer },
+    { href: '/admin/shipping-printer', label: lang === 'mr' ? 'पत्ता प्रिंट + QR (Beta)' : 'Address Print + QR (Beta)', icon: QrCode },
+    { href: '/admin/shipping-master', label: lang === 'mr' ? 'शिपिंग मास्टर (Beta)' : 'Shipping Master (Beta)', icon: ScanLine },
     { href: '/admin/help', label: lang === 'mr' ? 'मदत व माहिती' : 'Help & Guide', icon: HelpCircle },
   ];
 

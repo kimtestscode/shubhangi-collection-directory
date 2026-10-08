@@ -4,7 +4,7 @@ import React, { useRef, useLayoutEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Order, LayoutPage, LayoutColumn } from '@/lib/address-printer/order';
 import { normalizeOrderNumber } from '@/lib/shipping';
-import { ArrowLeft, Printer, RefreshCw, QrCode } from 'lucide-react';
+import { ArrowLeft, Printer, RefreshCw, QrCode, AlertOctagon } from 'lucide-react';
 
 /**
  * Copy of components/address-printer/PrintPreview.tsx with one change:
@@ -285,6 +285,34 @@ export default function ShippingPrintPreview({ orders, onBack, onClear }: Props)
           </button>
         </div>
       </div>
+
+      {/* Duplicate Order Numbers Banner */}
+      {(() => {
+        const counts = new Map<string, number>();
+        for (const o of orders) {
+          const num = normalizeOrderNumber(o.orderNumber);
+          if (num) counts.set(num, (counts.get(num) ?? 0) + 1);
+        }
+        const dups = [...counts.entries()].filter(([, c]) => c > 1).map(([n]) => n);
+        if (dups.length === 0) return null;
+
+        return (
+          <div className="no-print bg-red-600 text-white px-4 py-3 text-xs sm:text-sm font-semibold flex items-center justify-between shadow-md">
+            <div className="flex items-center gap-2">
+              <AlertOctagon className="w-5 h-5 shrink-0" />
+              <span>
+                CRITICAL WARNING: Duplicate order numbers detected ({dups.map((n) => `#${n}`).join(', ')}). Multiple parcels will have identical QR codes which will conflict at pickup scan!
+              </span>
+            </div>
+            <button
+              onClick={onBack}
+              className="bg-white text-red-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-50 uppercase tracking-wider shrink-0 ml-3"
+            >
+              ← Fix in Review
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Unified A4 Pages */}
       <div className="flex flex-col items-center py-8 gap-8 print:py-0 print:gap-0 print:block">

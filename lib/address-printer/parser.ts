@@ -280,7 +280,14 @@ function parseOrderBlock(raw: string): Order {
   // ─── warnings ─────────────────────────────────────────────────────────────
   if (!to.name) warnings.push('Recipient name not detected');
   if (!to.address) warnings.push('Address not detected');
-  if (!to.mobile) warnings.push('Mobile number not detected');
+  if (!to.mobile) {
+    warnings.push('Mobile number not detected');
+  } else {
+    const cleanDigits = to.mobile.replace(/\D/g, '');
+    if (cleanDigits.length < 10) {
+      warnings.push(`Mobile number has fewer than 10 digits (${to.mobile})`);
+    }
+  }
   if (!to.pincode) warnings.push('Pincode not detected');
   if (!from.rawBlock) warnings.push('From / reseller information missing');
 

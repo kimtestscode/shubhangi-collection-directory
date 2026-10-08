@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS shipping_master (
   tracking_number  TEXT,
   tracking_url     TEXT,
   docket_photo_url TEXT,
+  shipping_cost    NUMERIC(10, 2),                      -- per-parcel commercial cost charged by courier
+  partner_submitted_at TIMESTAMPTZ,                     -- moment courier partner logged it at hub
   whatsapp_sent    BOOLEAN DEFAULT false,
   whatsapp_sent_at TIMESTAMPTZ,
   notes            TEXT,
@@ -37,6 +39,8 @@ ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS courier_partner TEXT;
 ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS tracking_number TEXT;
 ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS tracking_url TEXT;
 ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS docket_photo_url TEXT;
+ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS shipping_cost NUMERIC(10, 2);
+ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS partner_submitted_at TIMESTAMPTZ;
 ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS whatsapp_sent BOOLEAN DEFAULT false;
 ALTER TABLE shipping_master ADD COLUMN IF NOT EXISTS whatsapp_sent_at TIMESTAMPTZ;
 

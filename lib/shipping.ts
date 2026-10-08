@@ -17,6 +17,8 @@ export interface ShippingEntry {
   tracking_number: string | null;
   tracking_url: string | null;
   docket_photo_url: string | null;
+  shipping_cost: number | null;
+  partner_submitted_at: string | null;
   whatsapp_sent: boolean;
   whatsapp_sent_at: string | null;
   notes: string | null;

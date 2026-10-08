@@ -40,6 +40,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updates.docket_photo_url = typeof body.docket_photo_url === 'string' ? body.docket_photo_url.trim() : null;
   }
 
+  if (typeof body.shipping_cost !== 'undefined') {
+    updates.shipping_cost = body.shipping_cost === null || body.shipping_cost === '' ? null : Number(body.shipping_cost);
+  }
+
+  if (typeof body.partner_submitted_at !== 'undefined') {
+    updates.partner_submitted_at = body.partner_submitted_at;
+  }
+
   if (typeof body.whatsapp_sent === 'boolean') {
     updates.whatsapp_sent = body.whatsapp_sent;
     updates.whatsapp_sent_at = body.whatsapp_sent ? new Date().toISOString() : null;

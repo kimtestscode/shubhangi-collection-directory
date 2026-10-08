@@ -66,6 +66,7 @@ export default function ShippingMasterApp() {
   const [editingEntry, setEditingEntry] = useState<ShippingEntry | null>(null);
   const [editCourier, setEditCourier] = useState<CourierPartner>('shree_maruti');
   const [editDocket, setEditDocket] = useState('');
+  const [editShippingCost, setEditShippingCost] = useState('');
   const [editPhotoUrl, setEditPhotoUrl] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -231,6 +232,7 @@ export default function ShippingMasterApp() {
     setEditingEntry(entry);
     setEditCourier(entry.courier_partner || 'shree_maruti');
     setEditDocket(entry.tracking_number || '');
+    setEditShippingCost(entry.shipping_cost ? String(entry.shipping_cost) : '');
     setEditPhotoUrl(entry.docket_photo_url || '');
   }
 
@@ -248,6 +250,7 @@ export default function ShippingMasterApp() {
           courier_partner: editCourier,
           tracking_number: editDocket.trim(),
           tracking_url: trackingUrl,
+          shipping_cost: editShippingCost === '' ? null : Number(editShippingCost),
           docket_photo_url: editPhotoUrl.trim() || null,
           status: editDocket.trim() ? 'dispatched' : editingEntry.status,
         }),
@@ -257,6 +260,7 @@ export default function ShippingMasterApp() {
       if (!res.ok) throw new Error(updated.error || 'Failed to update tracking');
 
       setEntries((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setEditingEntry(null);
       setEditingEntry(null);
       beep(880, 80);
     } catch (e) {
@@ -334,8 +338,10 @@ export default function ShippingMasterApp() {
     let pickedUp = 0;
     let dispatched = 0;
     let delayed = 0;
+    let totalShippingCost = 0;
 
     for (const e of entries) {
+      if (e.shipping_cost) totalShippingCost += Number(e.shipping_cost);
       const st = e.status || (e.shipped_at ? 'picked_up' : 'pending');
       if (st === 'pending') {
         pending++;
@@ -347,7 +353,7 @@ export default function ShippingMasterApp() {
         dispatched++;
       }
     }
-    return { all: entries.length, pending, pickedUp, dispatched, delayed };
+    return { all: entries.length, pending, pickedUp, dispatched, delayed, totalShippingCost };
   }, [entries]);
 
   const visible = useMemo(() => {
@@ -388,6 +394,7 @@ export default function ShippingMasterApp() {
         'Pincode',
         'Courier Partner',
         'Docket / Tracking No',
+        'Shipping Cost (₹)',
         'Tracking URL',
         'Shipped / Pickup At',
         'Printed At',
@@ -407,6 +414,7 @@ export default function ShippingMasterApp() {
         e.customer_pincode ?? '',
         courierName,
         e.tracking_number ?? '',
+        e.shipping_cost ? `₹${e.shipping_cost}` : '',
         e.tracking_url ?? '',
         e.shipped_at ? formatShippedAt(e.shipped_at) : '',
         e.printed_at ? formatShippedAt(e.printed_at) : '',
@@ -448,37 +456,51 @@ export default function ShippingMasterApp() {
         </div>
 
         {/* Counter KPI Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-2 gap-2.5">
-          <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-3 text-center border border-white/10">
-            <div className="text-xl font-bold text-amber-300 leading-none">{counts.pending}</div>
-            <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-              {tx('Pending Pickup', 'पिकअप बाकी')}
-            </div>
-            {counts.delayed > 0 && (
-              <span className="inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded bg-red-500/30 text-red-200 border border-red-400/40 font-semibold">
-                {counts.delayed} {tx('delayed', 'उशीर')}
-              </span>
-            )}
-          </div>
+        <div className="flex flex-col sm:items-end gap-3">
+          <Link
+            href="/courier"
+            target="_blank"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-ivory text-xs font-semibold border border-white/20 transition-colors shadow-2xs self-start sm:self-auto"
+          >
+            <Truck className="w-3.5 h-3.5 text-gold" />
+            <span>{tx('Open Courier Partner Portal (/courier)', 'डिलिव्हरी पार्टनर पोर्टल उघडा (/courier)')}</span>
+            <ExternalLink className="w-3 h-3 text-gold" />
+          </Link>
 
-          <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-3 text-center border border-white/10">
-            <div className="text-xl font-bold text-sky-300 leading-none">{counts.pickedUp}</div>
-            <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-              {tx('Picked Up (Hub)', 'पिकअप झाले')}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2.5">
+            <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
+              <div className="text-lg font-bold text-amber-300 leading-none">{counts.pending}</div>
+              <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
+                {tx('Pending', 'पिकअप बाकी')}
+              </div>
+              {counts.delayed > 0 && (
+                <span className="inline-block mt-0.5 text-[8px] px-1 py-0.2 rounded bg-red-500/30 text-red-200 border border-red-400/40 font-semibold">
+                  {counts.delayed} !
+                </span>
+              )}
             </div>
-          </div>
 
-          <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-3 text-center border border-white/10">
-            <div className="text-xl font-bold text-emerald-400 leading-none">{counts.dispatched}</div>
-            <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-              {tx('Dispatched', 'डिस्पॅच पूर्ण')}
+            <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
+              <div className="text-lg font-bold text-sky-300 leading-none">{counts.pickedUp}</div>
+              <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
+                {tx('Picked Up', 'पिकअप झाले')}
+              </div>
             </div>
-          </div>
 
-          <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-3 text-center border border-white/10">
-            <div className="text-xl font-bold text-white leading-none">{counts.all}</div>
-            <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-              {tx('Total Orders', 'एकूण ऑर्डर्स')}
+            <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
+              <div className="text-lg font-bold text-emerald-400 leading-none">{counts.dispatched}</div>
+              <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
+                {tx('Dispatched', 'डिस्पॅच पूर्ण')}
+              </div>
+            </div>
+
+            <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
+              <div className="text-lg font-bold text-gold leading-none font-mono">
+                ₹{counts.totalShippingCost.toLocaleString('en-IN')}
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1 font-semibold">
+                {tx('Total Cost', 'एकूण खर्च')}
+              </div>
             </div>
           </div>
         </div>
@@ -798,6 +820,7 @@ export default function ShippingMasterApp() {
                   <th className="px-4 py-3 font-semibold">{tx('Customer', 'ग्राहक')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('Status & Timing', 'स्थिती आणि वेळ')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('Courier & Docket', 'कुरिअर आणि डॉकेट')}</th>
+                  <th className="px-4 py-3 font-semibold">{tx('Cost (₹)', 'खर्च (₹)')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('WhatsApp Tracking', 'व्हॉट्सॲप ट्रॅकिंग')}</th>
                   <th className="px-3 py-3 text-right" />
                 </tr>
@@ -973,6 +996,17 @@ export default function ShippingMasterApp() {
                         )}
                       </td>
 
+                      {/* Shipping Cost */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        {e.shipping_cost ? (
+                          <div className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl inline-block text-xs">
+                            ₹{e.shipping_cost}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-charcoal-light/50 italic">—</span>
+                        )}
+                      </td>
+
                       {/* 1-Click WhatsApp Button */}
                       <td className="px-4 py-3 align-top min-w-[175px]">
                         {!e.customer_mobile ? (
@@ -1118,6 +1152,26 @@ export default function ShippingMasterApp() {
                   </div>
                 </div>
               )}
+
+              {/* Shipping Cost (₹) Charged */}
+              <div>
+                <label htmlFor="edit-cost" className="block font-semibold text-charcoal mb-1.5">
+                  {tx('Shipping Cost Charged (₹)', 'कुरिअर खर्च (₹)')}
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-charcoal text-sm">
+                    ₹
+                  </span>
+                  <input
+                    id="edit-cost"
+                    type="number"
+                    value={editShippingCost}
+                    onChange={(e) => setEditShippingCost(e.target.value)}
+                    placeholder="e.g. 80"
+                    className="w-full pl-8 pr-3.5 py-2.5 text-sm font-mono font-bold border border-border-warm rounded-xl bg-ivory/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 text-charcoal"
+                  />
+                </div>
+              </div>
 
               {/* Docket Photo Upload or URL */}
               <div>

@@ -285,6 +285,17 @@ export default function ShippingMasterApp() {
 
   // ─── 1-Click WhatsApp Tracking ────────────────────────────────────────────
   async function handleSendWhatsApp(entry: ShippingEntry) {
+    if (!entry.courier_partner) {
+      alert(
+        tx(
+          'Please assign a courier partner (Logistics company) before sending tracking to the customer.',
+          'ग्राहकाला ट्रॅकिंग पाठवण्यापूर्वी आधी कुरिअर कंपनी निवडा.'
+        )
+      );
+      openEditModal(entry);
+      return;
+    }
+
     const waUrl = getWhatsAppUrl(entry);
     if (!waUrl) {
       alert(
@@ -963,8 +974,22 @@ export default function ShippingMasterApp() {
                       </td>
 
                       {/* 1-Click WhatsApp Button */}
-                      <td className="px-4 py-3 align-top min-w-[170px]">
-                        {e.customer_mobile ? (
+                      <td className="px-4 py-3 align-top min-w-[175px]">
+                        {!e.customer_mobile ? (
+                          <span className="text-[11px] text-charcoal-light/70 italic">
+                            {tx('No mobile on label', 'मोबाईल नंबर नाही')}
+                          </span>
+                        ) : !e.courier_partner ? (
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(e)}
+                            className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-ivory-dark/60 text-charcoal-light border border-dashed border-border-warm hover:border-gold hover:text-gold hover:bg-gold/5 transition-colors"
+                            title={tx('Assign courier partner first to enable Send Tracking', 'ट्रॅकिंग पाठवण्यासाठी आधी कुरिअर निवडा')}
+                          >
+                            <Truck className="w-3.5 h-3.5 text-charcoal-light/60" />
+                            <span>{tx('Assign Courier First', 'आधी कुरिअर जोडा')}</span>
+                          </button>
+                        ) : (
                           <div className="space-y-1.5">
                             <button
                               type="button"
@@ -988,10 +1013,6 @@ export default function ShippingMasterApp() {
                               </div>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-[11px] text-charcoal-light/70 italic">
-                            {tx('No mobile on label', 'मोबाईल नंबर नाही')}
-                          </span>
                         )}
                       </td>
 

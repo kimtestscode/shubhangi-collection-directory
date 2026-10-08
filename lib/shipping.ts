@@ -136,19 +136,22 @@ export function buildWhatsAppTrackingMessage(entry: Partial<ShippingEntry>): str
   if (trackingUrl) {
     if (entry.courier_partner === 'india_post') {
       lines.push(
-        `🔗 *Tracking Link:* ${trackingUrl}`,
-        `*(Enter your consignment number & captcha on the India Post page to view live status)*`
+        `🔗 *Tracking:* ${trackingUrl}`,
+        `*(Enter consignment no. & captcha on portal)*`
       );
     } else {
-      lines.push(`🔗 *Live Tracking Link:* ${trackingUrl}`);
+      lines.push(`🔗 *Live Tracking:* ${trackingUrl}`);
     }
   }
 
   lines.push(
     '',
-    `⏳ *Estimated Delivery:* 3 to 5 working days.`,
+    `⏳ *Estimated Delivery:*`,
+    `• Mumbai: 3–4 business days`,
+    `• Maharashtra: 5–12 business days`,
+    `• Out of Maharashtra: 7–15 business days`,
     '',
-    `Thank you for shopping with *Shubhangi Collection*! Feel free to reach out if you have any questions. 🙏🌸`
+    `Thank you for shopping with *Shubhangi Collection*! 🙏🌸`
   );
 
   return lines.join('\n');

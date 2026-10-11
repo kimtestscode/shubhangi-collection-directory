@@ -60,12 +60,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updates.status = 'dispatched';
   }
 
-  if (typeof body.customer_name === 'string') {
-    updates.customer_name = body.customer_name.trim();
+  if (typeof body.customer_name !== 'undefined') {
+    updates.customer_name = body.customer_name ? String(body.customer_name).trim() : null;
   }
 
-  if (typeof body.customer_mobile === 'string') {
-    updates.customer_mobile = body.customer_mobile.trim();
+  if (typeof body.customer_mobile !== 'undefined') {
+    updates.customer_mobile = body.customer_mobile ? String(body.customer_mobile).trim() : null;
+  }
+
+  if (typeof body.customer_address !== 'undefined') {
+    updates.customer_address = body.customer_address ? String(body.customer_address).trim() : null;
+  }
+
+  if (typeof body.customer_city !== 'undefined') {
+    updates.customer_city = body.customer_city ? String(body.customer_city).trim() : null;
+  }
+
+  if (typeof body.customer_pincode !== 'undefined') {
+    updates.customer_pincode = body.customer_pincode ? String(body.customer_pincode).trim() : null;
   }
 
   if (typeof body.shipped_at !== 'undefined') {

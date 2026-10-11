@@ -6,7 +6,7 @@ import {
   ScanLine, Camera, CameraOff, Download, Trash2, Search, CheckCircle2,
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
-  X, ChevronDown, Sparkles, AlertCircle, RefreshCw
+  X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
@@ -101,8 +101,25 @@ export default function ShippingMasterApp() {
   const [editShippedAt, setEditShippedAt] = useState('');
   const [editStatus, setEditStatus] = useState<ShippingStatus>('picked_up');
   const [editHandedTo, setEditHandedTo] = useState('');
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editCustomerMobile, setEditCustomerMobile] = useState('');
+  const [editCustomerAddress, setEditCustomerAddress] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Bulk Selection State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDateModalOpen, setBulkDateModalOpen] = useState(false);
+  const [bulkTargetDate, setBulkTargetDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+
+  // Batch Multi-Scan Input State
+  const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
+  const [batchOrdersText, setBatchOrdersText] = useState('');
+  const [submittingBatch, setSubmittingBatch] = useState(false);
 
   // Photo viewer modal
   const [viewingPhotoUrl, setViewingPhotoUrl] = useState<string | null>(null);
@@ -181,12 +198,17 @@ export default function ShippingMasterApp() {
       if (!res.ok) throw new Error(body.error || 'Failed to save');
 
       const entry: ShippingEntry = body.entry;
-      if (body.status === 'created') {
+      if (body.status === 'created' || body.status === 'updated') {
         setEntries((prev) => {
           const filtered = prev.filter((x) => x.id !== entry.id);
           return [entry, ...filtered];
         });
-        setFeedback({ kind: 'success', order: entry.order_number, at: entry.shipped_at || undefined });
+        setFeedback({
+          kind: 'success',
+          order: entry.order_number,
+          at: entry.shipped_at || undefined,
+          note: body.status === 'updated' ? tx('Pickup date updated ✓', 'पिकअप तारीख बदलली ✓') : undefined,
+        });
         beep(880);
         navigator.vibrate?.(80);
       } else {
@@ -204,7 +226,7 @@ export default function ShippingMasterApp() {
       busyRef.current = false;
       setSubmitting(false);
     }
-  }, []);
+  }, [tx]);
 
   const submitRef = useRef(submitOrder);
   useEffect(() => { submitRef.current = submitOrder; }, [submitOrder]);
@@ -264,16 +286,236 @@ export default function ShippingMasterApp() {
 
   async function handleDelete(entry: ShippingEntry) {
     const ok = window.confirm(
-      tx(`Remove order ${entry.order_number} from shipping master?`, `ऑर्डर ${entry.order_number} शिपिंग मास्टरमधून काढायचा?`),
+      tx(
+        `Are you sure you want to permanently delete order #${entry.order_number} from shipping master?`,
+        `ऑर्डर #${entry.order_number} शिपिंग मास्टरमधून कायमची हटवायची आहे का?`
+      ),
     );
     if (!ok) return;
     const res = await fetch(`/api/shipping/${entry.id}`, { method: 'DELETE' });
     if (res.ok) {
       setEntries((prev) => prev.filter((x) => x.id !== entry.id));
+      setSelectedIds((prev) => prev.filter((id) => id !== entry.id));
       lastScanRef.current = { code: '', time: 0 };
+      if (editingEntry?.id === entry.id) setEditingEntry(null);
     } else {
       const body = await res.json().catch(() => ({}));
       setFeedback({ kind: 'error', message: body.error || 'Failed to remove' });
+    }
+  }
+
+  // 1-Click Clear Address for single order
+  async function handleClearAddressSingle(entry: ShippingEntry) {
+    if (
+      !window.confirm(
+        tx(
+          `Clear customer address for Order #${entry.order_number}? (The order record remains in shipping master)`,
+          `ऑर्डर #${entry.order_number} चा पत्ता काढून टाकायचा का? (ऑर्डर क्रमांक तसाच राहील)`
+        )
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/shipping/${entry.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_address: null,
+          customer_city: null,
+          customer_pincode: null,
+        }),
+      });
+      const updated = await res.json();
+      if (!res.ok) throw new Error(updated.error || 'Failed to clear address');
+      setEntries((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      beep(880, 80);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error clearing address');
+    }
+  }
+
+  // ─── Bulk & Batch Actions ─────────────────────────────────────────────────
+  function handleToggleSelectAll(filteredEntries: ShippingEntry[]) {
+    const visibleIds = filteredEntries.map((e) => e.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  }
+
+  function handleToggleSelectOne(id: string) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  async function handleBulkClearAddresses() {
+    if (selectedIds.length === 0) return;
+    if (
+      !window.confirm(
+        tx(
+          `Clear customer address details on ${selectedIds.length} selected orders?`,
+          `निवडलेल्या ${selectedIds.length} ऑर्डर्सचे पत्ते काढून टाकायचे आहेत का?`
+        )
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch('/api/shipping/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'clear_addresses', ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to clear addresses');
+      const updatedMap = new Map((data.updated || []).map((u: ShippingEntry) => [u.id, u]));
+      setEntries((prev) =>
+        prev.map((e) => (updatedMap.has(e.id) ? (updatedMap.get(e.id) as ShippingEntry) : e))
+      );
+      setSelectedIds([]);
+      beep(880, 100);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error clearing addresses');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.length === 0) return;
+    if (
+      !window.confirm(
+        tx(
+          `DELETE CONFIRMATION: Permanently delete ${selectedIds.length} selected orders from Shipping Master?`,
+          `सावधान: निवडलेले ${selectedIds.length} ऑर्डर्स शिपिंग मास्टरमधून कायमचे हटवायचे आहेत का?`
+        )
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch('/api/shipping/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_entries', ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete entries');
+      const idSet = new Set(selectedIds);
+      setEntries((prev) => prev.filter((e) => !idSet.has(e.id)));
+      setSelectedIds([]);
+      beep(400, 100);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error deleting entries');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBulkUpdateDates(targetDateStr: string) {
+    if (selectedIds.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const now = new Date();
+      const [y, m, d] = targetDateStr.split('-').map(Number);
+      const targetDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+      const shippedAtIso = targetDate.toISOString();
+
+      const res = await fetch('/api/shipping/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_dates',
+          ids: selectedIds,
+          shipped_at: shippedAtIso,
+          handed_to: handedToRef.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update dates');
+
+      const updatedMap = new Map((data.updated || []).map((u: ShippingEntry) => [u.id, u]));
+      setEntries((prev) =>
+        prev.map((e) => (updatedMap.has(e.id) ? (updatedMap.get(e.id) as ShippingEntry) : e))
+      );
+      setSelectedIds([]);
+      setBulkDateModalOpen(false);
+      beep(880, 100);
+      setFeedback({
+        kind: 'success',
+        order: `${data.count} orders`,
+        at: shippedAtIso,
+        note: tx(`Pickup date updated to ${targetDateStr} ✓`, `पिकअप तारीख ${targetDateStr} वर सेट झाली ✓`),
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Error updating pickup dates');
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBatchOrdersSubmit() {
+    const rawTokens = batchOrdersText
+      .split(/[\n,\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    if (rawTokens.length === 0) return;
+
+    setSubmittingBatch(true);
+    try {
+      const chosenDate = pickupDateRef.current;
+      const todayStr = getTodayDateStr();
+      let shippedAtIso: string;
+      if (chosenDate && chosenDate !== todayStr) {
+        const now = new Date();
+        const [y, m, d] = chosenDate.split('-').map(Number);
+        const customDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+        shippedAtIso = customDate.toISOString();
+      } else {
+        shippedAtIso = new Date().toISOString();
+      }
+
+      const res = await fetch('/api/shipping/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update_dates',
+          order_numbers: rawTokens,
+          shipped_at: shippedAtIso,
+          handed_to: handedToRef.current,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Batch update failed');
+
+      if (data.updated && data.updated.length > 0) {
+        const updatedMap = new Map(data.updated.map((u: ShippingEntry) => [u.id, u]));
+        setEntries((prev) => {
+          const remaining = prev.filter((e) => !updatedMap.has(e.id));
+          return [...data.updated, ...remaining];
+        });
+      }
+
+      setBatchOrdersText('');
+      setIsBatchScanOpen(false);
+      beep(880, 120);
+      setFeedback({
+        kind: 'success',
+        order: `${data.count} orders`,
+        at: shippedAtIso,
+        note: tx(`Bulk pickup recorded (${chosenDate}) ✓`, `एकत्र पिकअप नोंद झाली (${chosenDate}) ✓`),
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Batch scan error');
+    } finally {
+      setSubmittingBatch(false);
     }
   }
 
@@ -286,6 +528,9 @@ export default function ShippingMasterApp() {
     setEditPhotoUrl(entry.docket_photo_url || '');
     setEditStatus(entry.status || (entry.shipped_at ? 'picked_up' : 'pending'));
     setEditHandedTo(entry.handed_to || '');
+    setEditCustomerName(entry.customer_name || '');
+    setEditCustomerMobile(entry.customer_mobile || '');
+    setEditCustomerAddress(entry.customer_address || '');
     if (entry.shipped_at) {
       const d = new Date(entry.shipped_at);
       const pad = (n: number) => String(n).padStart(2, '0');
@@ -321,6 +566,9 @@ export default function ShippingMasterApp() {
           status: editDocket.trim() ? 'dispatched' : editStatus,
           handed_to: editHandedTo.trim() || null,
           shipped_at: resolvedShippedAt,
+          customer_name: editCustomerName.trim() || null,
+          customer_mobile: editCustomerMobile.trim() || null,
+          customer_address: editCustomerAddress.trim() || null,
         }),
       });
 
@@ -328,7 +576,6 @@ export default function ShippingMasterApp() {
       if (!res.ok) throw new Error(updated.error || 'Failed to update tracking');
 
       setEntries((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-      setEditingEntry(null);
       setEditingEntry(null);
       beep(880, 80);
     } catch (e) {
@@ -788,6 +1035,76 @@ export default function ShippingMasterApp() {
             {tx('Mark Picked Up', 'पिकअप नोंदवा')}
           </button>
         </form>
+
+        {/* Batch Multi-Scan & Bulk Date Update Drawer */}
+        <div className="pt-2 border-t border-border-warm">
+          <button
+            type="button"
+            onClick={() => setIsBatchScanOpen(!isBatchScanOpen)}
+            className="inline-flex items-center gap-2 text-xs font-bold text-gold hover:text-gold/80 transition-colors"
+          >
+            <Layers className="w-4 h-4" />
+            <span>
+              {isBatchScanOpen
+                ? tx('▲ Hide Batch / Bulk Scanner', '▲ बल्क स्कॅनर लपवा')
+                : tx('⚡ Bulk Scan / Multi-Order Date Update (Continuous Barcodes)', '⚡ बल्क स्कॅन / एकाच वेळी अनेक ऑर्डर्सची तारीख बदला')}
+            </span>
+          </button>
+
+          {isBatchScanOpen && (
+            <div className="mt-3 p-4 rounded-2xl bg-ivory/60 border border-border-warm space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-semibold text-charcoal">
+                  {tx(
+                    'Scan multiple barcodes continuously or paste order numbers:',
+                    'सतत बारकोड स्कॅन करा किंवा ऑर्डर्स क्रमांक पेस्ट करा:'
+                  )}
+                </span>
+                <span className="text-[11px] text-charcoal-light">
+                  {tx('Target Pickup Date', 'पिकअप तारीख')}:{' '}
+                  <strong className="text-gold font-mono font-bold">{pickupDate}</strong>
+                </span>
+              </div>
+
+              <textarea
+                rows={3}
+                value={batchOrdersText}
+                onChange={(e) => setBatchOrdersText(e.target.value)}
+                placeholder={tx(
+                  'Scan barcodes or paste numbers separated by newlines, commas, or spaces (e.g. 14526, 14530, 14531)...',
+                  'बारकोड स्कॅन करा किंवा ऑर्डर्स क्रमांक टाका (उदा. 14526, 14530, 14531)...'
+                )}
+                className="w-full border border-border-warm rounded-xl p-3 text-xs font-mono bg-white focus:outline-none focus:border-gold"
+              />
+
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-[11px] text-charcoal-light font-mono font-semibold">
+                  {batchOrdersText.split(/[\n,\s]+/).filter(Boolean).length}{' '}
+                  {tx('order(s) entered', 'ऑर्डर्स आढळल्या')}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={handleBatchOrdersSubmit}
+                  disabled={submittingBatch || !batchOrdersText.trim()}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-charcoal text-white text-xs font-bold hover:bg-charcoal/90 disabled:opacity-40 transition-all shadow-xs"
+                >
+                  {submittingBatch ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <PackageCheck className="w-3.5 h-3.5 text-gold" />
+                  )}
+                  <span>
+                    {tx(
+                      `Bulk Update Pickup Dates to ${pickupDate}`,
+                      `या सर्व ऑर्डर्सची तारीख ${pickupDate} वर सेट करा`
+                    )}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Main Records Table Card */}
@@ -939,6 +1256,67 @@ export default function ShippingMasterApp() {
           </div>
         )}
 
+        {/* Bulk Action Bar (when orders selected) */}
+        {selectedIds.length > 0 && (
+          <div className="bg-charcoal text-white px-4 py-3 border-b border-charcoal flex flex-wrap items-center justify-between gap-3 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gold text-charcoal font-bold text-xs">
+                {selectedIds.length}
+              </span>
+              <span className="text-xs sm:text-sm font-semibold">
+                {tx(
+                  `${selectedIds.length} orders selected`,
+                  `${selectedIds.length} ऑर्डर्स निवडल्या`
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                className="text-xs text-ivory/70 hover:text-white underline ml-2"
+              >
+                {tx('Deselect All', 'सर्व निवडी काढा')}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={() => {
+                  setBulkTargetDate(pickupDate || getTodayDateStr());
+                  setBulkDateModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold text-charcoal text-xs font-bold hover:bg-gold-light transition-colors disabled:opacity-50"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{tx('Bulk Update Pickup Date', 'पिकअप तारीख एकत्र बदला')}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={handleBulkClearAddresses}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-medium border border-white/20 transition-colors disabled:opacity-50"
+                title={tx('Clear address details from selected orders', 'निवडलेल्या ऑर्डर्सचे पत्ते काढून टाका')}
+              >
+                <Eraser className="w-3.5 h-3.5 text-amber-300" />
+                <span>{tx('Delete Addresses', 'पत्ते हटवा')}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={bulkBusy}
+                onClick={handleBulkDelete}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-colors disabled:opacity-50"
+                title={tx('Permanently delete selected orders from shipping master', 'निवडलेल्या ऑर्डर्स कायमच्या हटवा')}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{tx('Delete Selected Entries', 'नोंदी कायमच्या हटवा')}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Table Content */}
         {loading ? (
           <div className="p-12 text-center text-charcoal-light">
@@ -958,13 +1336,22 @@ export default function ShippingMasterApp() {
             <table className="w-full text-xs sm:text-sm">
               <thead>
                 <tr className="bg-ivory-dark/60 text-left text-[11px] uppercase tracking-wider text-charcoal-light border-b border-border-warm">
+                  <th className="w-10 px-3 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label={tx('Select all visible orders', 'सर्व ऑर्डर्स निवडा')}
+                      checked={visible.length > 0 && visible.every((e) => selectedIds.includes(e.id))}
+                      onChange={() => handleToggleSelectAll(visible)}
+                      className="rounded border-border-warm text-gold focus:ring-gold cursor-pointer"
+                    />
+                  </th>
                   <th className="px-4 py-3 font-semibold">{tx('Order No', 'ऑर्डर नं.')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('Customer', 'ग्राहक')}</th>
+                  <th className="px-4 py-3 font-semibold">{tx('Customer & Address', 'ग्राहक आणि पत्ता')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('Status & Timing', 'स्थिती आणि वेळ')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('Courier & Docket', 'कुरिअर आणि डॉकेट')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('Cost (₹)', 'खर्च (₹)')}</th>
                   <th className="px-4 py-3 font-semibold">{tx('WhatsApp Tracking', 'व्हॉट्सॲप ट्रॅकिंग')}</th>
-                  <th className="px-3 py-3 text-right" />
+                  <th className="px-3 py-3 text-right">{tx('Actions', 'कृती')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-warm/80">
@@ -978,13 +1365,26 @@ export default function ShippingMasterApp() {
                     <tr
                       key={e.id}
                       className={`transition-colors duration-700 ${
-                        highlightId === e.id
+                        selectedIds.includes(e.id)
+                          ? 'bg-gold/10'
+                          : highlightId === e.id
                           ? 'bg-gold/20'
                           : isDelayed
                           ? 'bg-red-50/40 hover:bg-red-50/70'
                           : 'hover:bg-ivory/50'
                       }`}
                     >
+                      {/* Checkbox */}
+                      <td className="w-10 px-3 py-3 align-top text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select order ${e.order_number}`}
+                          checked={selectedIds.includes(e.id)}
+                          onChange={() => handleToggleSelectOne(e.id)}
+                          className="rounded border-border-warm text-gold focus:ring-gold cursor-pointer mt-1"
+                        />
+                      </td>
+
                       {/* Order Number & Printed Info */}
                       <td className="px-4 py-3 align-top">
                         <div className="font-mono font-bold text-charcoal text-sm sm:text-base">
@@ -1000,8 +1400,8 @@ export default function ShippingMasterApp() {
                         )}
                       </td>
 
-                      {/* Customer Details */}
-                      <td className="px-4 py-3 align-top max-w-[200px]">
+                      {/* Customer Details & Address */}
+                      <td className="px-4 py-3 align-top max-w-[240px]">
                         <div className="font-semibold text-charcoal truncate">
                           {e.customer_name || '—'}
                         </div>
@@ -1010,10 +1410,38 @@ export default function ShippingMasterApp() {
                             {e.customer_mobile}
                           </div>
                         )}
-                        {(e.customer_city || e.customer_pincode) && (
-                          <div className="text-[11px] text-charcoal-light truncate mt-0.5">
-                            {[e.customer_city, e.customer_pincode].filter(Boolean).join(' - ')}
+                        {e.customer_address ? (
+                          <div className="mt-1.5 p-2 rounded-xl bg-ivory/80 border border-border-warm/70 text-[11px] space-y-1">
+                            <div className="text-charcoal leading-snug line-clamp-3">
+                              {e.customer_address}
+                            </div>
+                            {(e.customer_city || e.customer_pincode) && (
+                              <div className="text-[10px] text-charcoal-light font-medium">
+                                {[e.customer_city, e.customer_pincode].filter(Boolean).join(' - ')}
+                              </div>
+                            )}
+                            <div className="pt-0.5 flex items-center justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleClearAddressSingle(e)}
+                                className="inline-flex items-center gap-1 text-[10px] text-red-600 hover:text-red-700 hover:underline font-semibold"
+                                title={tx('Delete / Clear this address', 'हा पत्ता काढून टाका')}
+                              >
+                                <Eraser className="w-3 h-3" />
+                                <span>{tx('Delete Address', 'पत्ता हटवा')}</span>
+                              </button>
+                            </div>
                           </div>
+                        ) : (
+                          (e.customer_city || e.customer_pincode) ? (
+                            <div className="text-[11px] text-charcoal-light truncate mt-0.5">
+                              {[e.customer_city, e.customer_pincode].filter(Boolean).join(' - ')}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-charcoal-light/60 italic mt-0.5">
+                              {tx('No address on record', 'पत्ता उपलब्ध नाही')}
+                            </div>
+                          )
                         )}
                       </td>
 
@@ -1024,8 +1452,8 @@ export default function ShippingMasterApp() {
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
                                 isDelayed
-                                  ? 'bg-red-100 text-red-800 border-red-300'
-                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                                    ? 'bg-red-100 text-red-800 border-red-300'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
                               }`}
                             >
                               <Clock className="w-3 h-3" />
@@ -1192,15 +1620,26 @@ export default function ShippingMasterApp() {
                         )}
                       </td>
 
-                      {/* Delete action */}
-                      <td className="px-3 py-3 align-top text-right">
-                        <button
-                          onClick={() => handleDelete(e)}
-                          className="p-1 text-charcoal-light hover:text-red-600 rounded-lg transition-colors"
-                          title={tx('Remove record', 'काढून टाका')}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      {/* Actions: Edit & Delete */}
+                      <td className="px-3 py-3 align-top text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(e)}
+                            className="p-1.5 text-charcoal-light hover:text-gold hover:bg-gold/10 rounded-lg transition-colors"
+                            title={tx('Edit order details', 'ऑर्डर माहिती बदला')}
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(e)}
+                            className="p-1.5 text-charcoal-light hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title={tx('Permanently delete entry', 'नोंद कायमची हटवा')}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1233,6 +1672,66 @@ export default function ShippingMasterApp() {
             </div>
 
             <div className="space-y-4 text-xs sm:text-sm">
+              {/* Customer & Address Details */}
+              <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-xs text-charcoal uppercase tracking-wider">
+                    {tx('Customer Information & Address', 'ग्राहक माहिती आणि पत्ता')}
+                  </div>
+                  {editCustomerAddress && (
+                    <button
+                      type="button"
+                      onClick={() => setEditCustomerAddress('')}
+                      className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-700 underline font-semibold"
+                      title={tx('Remove delivery address', 'पत्ता काढून टाका')}
+                    >
+                      <Eraser className="w-3 h-3" />
+                      <span>{tx('Clear Address (पत्ता हटवा)', 'पत्ता हटवा')}</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                      {tx('Customer Name', 'ग्राहकाचे नाव')}
+                    </label>
+                    <input
+                      type="text"
+                      value={editCustomerName}
+                      onChange={(e) => setEditCustomerName(e.target.value)}
+                      placeholder="e.g. Shailaja Bhosale"
+                      className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                      {tx('Mobile Number', 'मोबाईल नंबर')}
+                    </label>
+                    <input
+                      type="tel"
+                      value={editCustomerMobile}
+                      onChange={(e) => setEditCustomerMobile(e.target.value)}
+                      placeholder="e.g. 9876543210"
+                      className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white font-mono focus:outline-none focus:border-gold text-charcoal"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                    {tx('Delivery Address', 'डिलिव्हरी पत्ता')}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={editCustomerAddress}
+                    onChange={(e) => setEditCustomerAddress(e.target.value)}
+                    placeholder={tx('Full delivery address with landmark and city', 'संपूर्ण पत्ता, लँडमार्क व शहर')}
+                    className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal resize-none"
+                  />
+                </div>
+              </div>
+
               {/* Pickup Status & Date Control */}
               <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -1467,22 +1966,141 @@ export default function ShippingMasterApp() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border-warm">
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-border-warm">
               <button
                 type="button"
-                onClick={() => setEditingEntry(null)}
+                onClick={() => {
+                  if (editingEntry) handleDelete(editingEntry);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+                title={tx('Permanently delete this order from shipping master', 'ही ऑर्डर कायमची हटवा')}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{tx('Delete Entry', 'नोंद हटवा')}</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingEntry(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory"
+                >
+                  {tx('Cancel', 'रद्द करा')}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTracking}
+                  disabled={savingEdit}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs"
+                >
+                  {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  <span>{tx('Save & Update', 'सेव्ह करा')}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Update Pickup Date Modal */}
+      {bulkDateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 border border-border-warm shadow-xl">
+            <div className="flex items-center justify-between border-b border-border-warm pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-gold/20 flex items-center justify-center text-gold">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-bold text-charcoal">
+                    {tx('Bulk Update Pickup Date', 'पिकअप तारीख एकत्र बदला')}
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    {tx(
+                      `Updating pickup timestamp for ${selectedIds.length} selected orders`,
+                      `निवडलेल्या ${selectedIds.length} ऑर्डर्सची पिकअप तारीख बदलत आहे`
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkDateModalOpen(false)}
+                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs sm:text-sm">
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs">
+                {tx(
+                  'This will update the pickup date/time for all selected orders and mark them as Picked Up in the shipping log.',
+                  'यामुळे सर्व निवडलेल्या ऑर्डर्सची पिकअप तारीख बदलेल आणि त्या पिकअप झालेल्या नोंदी म्हणून अपडेट होतील.'
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-charcoal mb-1.5">
+                  {tx('Select Target Pickup Date', 'पिकअप तारीख निवडा')}
+                </label>
+                <input
+                  type="date"
+                  value={bulkTargetDate}
+                  onChange={(e) => setBulkTargetDate(e.target.value)}
+                  className="w-full border border-border-warm rounded-xl px-3.5 py-2.5 bg-ivory/40 focus:outline-none focus:border-gold font-mono font-medium text-charcoal"
+                />
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex items-center gap-2 pt-1 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setBulkTargetDate(getTodayDateStr())}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors ${
+                    bulkTargetDate === getTodayDateStr()
+                      ? 'bg-charcoal text-white border-charcoal'
+                      : 'border-border-warm bg-white text-charcoal hover:bg-ivory'
+                  }`}
+                >
+                  {tx('Today (आज)', 'आज')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 1);
+                    const pad = (n: number) => String(n).padStart(2, '0');
+                    setBulkTargetDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium border border-border-warm bg-white text-charcoal hover:bg-ivory transition-colors"
+                >
+                  {tx('Yesterday (काल)', 'काल')}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-border-warm">
+              <button
+                type="button"
+                onClick={() => setBulkDateModalOpen(false)}
                 className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory"
               >
                 {tx('Cancel', 'रद्द करा')}
               </button>
               <button
                 type="button"
-                onClick={handleSaveTracking}
-                disabled={savingEdit}
+                disabled={bulkBusy || !bulkTargetDate}
+                onClick={() => handleBulkUpdateDates(bulkTargetDate)}
                 className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs"
               >
-                {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                <span>{tx('Save & Update', 'सेव्ह करा')}</span>
+                {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                <span>
+                  {tx(
+                    `Update ${selectedIds.length} Orders`,
+                    `${selectedIds.length} ऑर्डर्स अपडेट करा`
+                  )}
+                </span>
               </button>
             </div>
           </div>

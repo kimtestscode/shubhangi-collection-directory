@@ -114,13 +114,15 @@ export async function POST(req: NextRequest) {
   }
 
   if (existing) {
-    // If order is currently pending pickup, or if caller explicitly requested back-date / update
-    const shouldUpdateDate = existing.status === 'pending' || !existing.shipped_at || body.force_update === true;
-    if (shouldUpdateDate) {
+    const isNewDate = !existing.shipped_at || existing.shipped_at.slice(0, 10) !== pickupTime.slice(0, 10) || body.force_update === true;
+    const shouldUpdate = existing.status === 'pending' || isNewDate;
+
+    if (shouldUpdate) {
+      const nextStatus = existing.status === 'dispatched' ? 'dispatched' : 'picked_up';
       const { data: updated, error: updateError } = await supabase
         .from('shipping_master')
         .update({
-          status: 'picked_up',
+          status: nextStatus,
           shipped_at: pickupTime,
           handed_to: handedTo ?? existing.handed_to,
         })
@@ -129,10 +131,13 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 });
-      return NextResponse.json({ status: 'created', entry: updated });
+      return NextResponse.json({
+        status: existing.status === 'pending' ? 'created' : 'updated',
+        entry: updated,
+      });
     }
 
-    // Already picked up or dispatched
+    // Already picked up with the same date
     return NextResponse.json({ status: 'duplicate', entry: existing });
   }
 

@@ -68,6 +68,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updates.customer_mobile = body.customer_mobile.trim();
   }
 
+  if (typeof body.shipped_at !== 'undefined') {
+    if (body.shipped_at === null || body.shipped_at === '') {
+      updates.shipped_at = null;
+    } else {
+      const parsed = new Date(body.shipped_at);
+      if (!isNaN(parsed.getTime())) {
+        updates.shipped_at = parsed.toISOString();
+      }
+    }
+  }
+
+  if (typeof body.handed_to !== 'undefined') {
+    updates.handed_to = typeof body.handed_to === 'string' ? body.handed_to.trim() : null;
+  }
+
   if (typeof body.notes !== 'undefined') {
     updates.notes = typeof body.notes === 'string' ? body.notes.trim() : null;
   }

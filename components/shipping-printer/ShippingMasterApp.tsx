@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ScanLine, Camera, CameraOff, Download, Trash2, Search, CheckCircle2,
-  AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Printer, Truck,
+  AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
   X, ChevronDown, Sparkles, AlertCircle, RefreshCw
 } from 'lucide-react';
@@ -62,12 +62,45 @@ export default function ShippingMasterApp() {
   const [filterDate, setFilterDate] = useState('');
   const [filterCourier, setFilterCourier] = useState<string>('all');
 
+  // Helper for dates in local YYYY-MM-DD
+  const getTodayDateStr = useCallback(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  const getYesterdayDateStr = useCallback(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, []);
+
+  // Ongoing pickup date state - Defaults to current ongoing date!
+  const [pickupDate, setPickupDate] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  });
+  const pickupDateRef = useRef(pickupDate);
+  useEffect(() => {
+    pickupDateRef.current = pickupDate;
+  }, [pickupDate]);
+
+  const isBackDated = pickupDate !== getTodayDateStr();
+
   // Edit Tracking Modal / Drawer state
   const [editingEntry, setEditingEntry] = useState<ShippingEntry | null>(null);
   const [editCourier, setEditCourier] = useState<CourierPartner>('shree_maruti');
   const [editDocket, setEditDocket] = useState('');
   const [editShippingCost, setEditShippingCost] = useState('');
   const [editPhotoUrl, setEditPhotoUrl] = useState('');
+  const [editShippedAt, setEditShippedAt] = useState('');
+  const [editStatus, setEditStatus] = useState<ShippingStatus>('picked_up');
+  const [editHandedTo, setEditHandedTo] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -122,10 +155,27 @@ export default function ShippingMasterApp() {
     busyRef.current = true;
     setSubmitting(true);
     try {
+      const chosenDate = pickupDateRef.current;
+      const todayStr = getTodayDateStr();
+      let shippedAtIso: string | undefined = undefined;
+      if (chosenDate && chosenDate !== todayStr) {
+        const now = new Date();
+        const [y, m, d] = chosenDate.split('-').map(Number);
+        const customDate = new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds());
+        shippedAtIso = customDate.toISOString();
+      } else {
+        shippedAtIso = new Date().toISOString();
+      }
+
       const res = await fetch('/api/shipping', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order_number: code, handed_to: handedToRef.current }),
+        body: JSON.stringify({
+          order_number: code,
+          handed_to: handedToRef.current,
+          shipped_at: shippedAtIso,
+          force_update: true,
+        }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'Failed to save');
@@ -234,6 +284,15 @@ export default function ShippingMasterApp() {
     setEditDocket(entry.tracking_number || '');
     setEditShippingCost(entry.shipping_cost ? String(entry.shipping_cost) : '');
     setEditPhotoUrl(entry.docket_photo_url || '');
+    setEditStatus(entry.status || (entry.shipped_at ? 'picked_up' : 'pending'));
+    setEditHandedTo(entry.handed_to || '');
+    if (entry.shipped_at) {
+      const d = new Date(entry.shipped_at);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      setEditShippedAt(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    } else {
+      setEditShippedAt('');
+    }
   }
 
   async function handleSaveTracking() {
@@ -242,6 +301,13 @@ export default function ShippingMasterApp() {
     try {
       const partnerMeta = COURIER_META[editCourier];
       const trackingUrl = partnerMeta ? partnerMeta.getTrackingUrl(editDocket) : '';
+
+      let resolvedShippedAt: string | null = editingEntry.shipped_at;
+      if (editShippedAt) {
+        resolvedShippedAt = new Date(editShippedAt).toISOString();
+      } else if (editStatus === 'pending') {
+        resolvedShippedAt = null;
+      }
 
       const res = await fetch(`/api/shipping/${editingEntry.id}`, {
         method: 'PATCH',
@@ -252,7 +318,9 @@ export default function ShippingMasterApp() {
           tracking_url: trackingUrl,
           shipping_cost: editShippingCost === '' ? null : Number(editShippingCost),
           docket_photo_url: editPhotoUrl.trim() || null,
-          status: editDocket.trim() ? 'dispatched' : editingEntry.status,
+          status: editDocket.trim() ? 'dispatched' : editStatus,
+          handed_to: editHandedTo.trim() || null,
+          shipped_at: resolvedShippedAt,
         }),
       });
 
@@ -608,6 +676,80 @@ export default function ShippingMasterApp() {
             </div>
           </div>
         )}
+
+        {/* Pickup Date Control (Defaults to ongoing today date, supports back-dating) */}
+        <div className="bg-ivory/60 border border-border-warm rounded-2xl p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-gold" />
+              <span className="text-xs font-bold text-charcoal">
+                {tx('Pickup Date', 'पिकअप तारीख')}:
+              </span>
+              <span className="text-[11px] text-charcoal-light">
+                {tx('(Current date selected by default)', '(चालू तारीख आपोआप निवडलेली आहे)')}
+              </span>
+            </div>
+
+            {isBackDated ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                <span>{tx(`Back-dating to: ${pickupDate}`, `मागील तारीख: ${pickupDate}`)}</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                <span>{tx('Today (Ongoing Date)', 'चालू तारीख')}</span>
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setPickupDate(getTodayDateStr())}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                !isBackDated
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-white border border-border-warm text-charcoal hover:bg-ivory'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>{tx('Today (चालू तारीख)', 'आजची तारीख (चालू)')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPickupDate(getYesterdayDateStr())}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                pickupDate === getYesterdayDateStr()
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white border border-border-warm text-charcoal hover:bg-ivory'
+              }`}
+            >
+              <span>{tx('Yesterday (काल)', 'काल')}</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 ml-auto sm:ml-0">
+              <span className="text-[11px] font-semibold text-charcoal-light">{tx('Select Date:', 'तारीख निवडा:')}</span>
+              <input
+                type="date"
+                value={pickupDate}
+                onChange={(e) => setPickupDate(e.target.value || getTodayDateStr())}
+                max={getTodayDateStr()}
+                className="px-2.5 py-1 text-xs rounded-xl border border-border-warm bg-white font-mono text-charcoal focus:outline-none focus:border-gold"
+              />
+              {isBackDated && (
+                <button
+                  type="button"
+                  onClick={() => setPickupDate(getTodayDateStr())}
+                  className="text-[11px] text-amber-700 hover:text-amber-900 underline font-semibold ml-1"
+                >
+                  {tx('Reset to Today', 'आजवर रिसेट करा')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Manual scanner / hardware barcode entry */}
         <form onSubmit={handleManualSubmit} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3 items-end pt-1">
@@ -1091,6 +1233,106 @@ export default function ShippingMasterApp() {
             </div>
 
             <div className="space-y-4 text-xs sm:text-sm">
+              {/* Pickup Status & Date Control */}
+              <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-charcoal uppercase tracking-wider">
+                    <Calendar className="w-3.5 h-3.5 text-gold" />
+                    <span>{tx('Pickup Status & Date', 'पिकअप स्थिती व तारीख')}</span>
+                  </div>
+                  <span className="text-[10px] text-charcoal-light">
+                    {tx('Back-date or edit pickup timestamp', 'पिकअप तारीख बदला किंवा मागील तारीख द्या')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                      {tx('Pipeline Status', 'ऑर्डर स्थिती')}
+                    </label>
+                    <select
+                      value={editStatus}
+                      onChange={(e) => setEditStatus(e.target.value as ShippingStatus)}
+                      className="w-full border border-border-warm rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:border-gold font-medium text-charcoal"
+                    >
+                      <option value="pending">{tx('🟡 Pending Pickup', '🟡 पिकअप बाकी')}</option>
+                      <option value="picked_up">{tx('🔵 Picked Up (Hub Handover)', '🔵 पिकअप झाले')}</option>
+                      <option value="dispatched">{tx('🟢 Dispatched', '🟢 डिस्पॅच पूर्ण')}</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                      {tx('Pickup Date & Time (Back-date)', 'पिकअप तारीख व वेळ')}
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={editShippedAt}
+                      onChange={(e) => {
+                        setEditShippedAt(e.target.value);
+                        if (e.target.value && editStatus === 'pending') {
+                          setEditStatus('picked_up');
+                        }
+                      }}
+                      className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white font-mono focus:outline-none focus:border-gold text-charcoal"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                    {tx('Handed To / Delivery Person', 'डिलिव्हरी व्यक्तीचे नाव')}
+                  </label>
+                  <input
+                    type="text"
+                    value={editHandedTo}
+                    onChange={(e) => setEditHandedTo(e.target.value)}
+                    placeholder={tx('e.g. Maruti Boy / Mahesh', 'उदा. महेश / मारुती बॉय')}
+                    className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-1 text-[11px] flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const now = new Date();
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      setEditShippedAt(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+                      if (editStatus === 'pending') setEditStatus('picked_up');
+                    }}
+                    className="text-xs text-gold hover:underline font-semibold"
+                  >
+                    {tx('Set to Now', 'चालू वेळ सेट करा')}
+                  </button>
+                  <span className="text-charcoal-light/40">•</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 1);
+                      const pad = (n: number) => String(n).padStart(2, '0');
+                      setEditShippedAt(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                      if (editStatus === 'pending') setEditStatus('picked_up');
+                    }}
+                    className="text-xs text-amber-700 hover:underline font-semibold"
+                  >
+                    {tx('Set to Yesterday (मागील तारीख)', 'कालची तारीख')}
+                  </button>
+                  <span className="text-charcoal-light/40">•</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditShippedAt('');
+                      setEditStatus('pending');
+                    }}
+                    className="text-xs text-charcoal-light hover:underline"
+                  >
+                    {tx('Clear Pickup Date', 'तारीख रद्द करा')}
+                  </button>
+                </div>
+              </div>
+
               {/* Courier Partner Selection */}
               <div>
                 <label className="block font-semibold text-charcoal mb-1.5">

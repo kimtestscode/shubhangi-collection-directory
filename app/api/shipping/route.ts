@@ -105,15 +105,23 @@ export async function POST(req: NextRequest) {
   if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
 
   const nowIso = new Date().toISOString();
+  let pickupTime = nowIso;
+  if (body.shipped_at && typeof body.shipped_at === 'string') {
+    const parsed = new Date(body.shipped_at);
+    if (!isNaN(parsed.getTime())) {
+      pickupTime = parsed.toISOString();
+    }
+  }
 
   if (existing) {
-    // If order is currently pending pickup, scanning marks it picked_up!
-    if (existing.status === 'pending' || !existing.shipped_at) {
+    // If order is currently pending pickup, or if caller explicitly requested back-date / update
+    const shouldUpdateDate = existing.status === 'pending' || !existing.shipped_at || body.force_update === true;
+    if (shouldUpdateDate) {
       const { data: updated, error: updateError } = await supabase
         .from('shipping_master')
         .update({
           status: 'picked_up',
-          shipped_at: nowIso,
+          shipped_at: pickupTime,
           handed_to: handedTo ?? existing.handed_to,
         })
         .eq('id', existing.id)
@@ -134,7 +142,7 @@ export async function POST(req: NextRequest) {
     .insert({
       order_number: orderNumber,
       status: 'picked_up',
-      shipped_at: nowIso,
+      shipped_at: pickupTime,
       handed_to: handedTo,
     })
     .select()

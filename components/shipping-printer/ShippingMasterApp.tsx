@@ -1067,15 +1067,27 @@ export default function ShippingMasterApp() {
 
         {/* Counter KPI Cards */}
         <div className="flex flex-col sm:items-end gap-3">
-          <Link
-            href="/courier"
-            target="_blank"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-ivory text-xs font-semibold border border-white/20 transition-colors shadow-2xs self-start sm:self-auto"
-          >
-            <Truck className="w-3.5 h-3.5 text-gold" />
-            <span>{tx('Open Courier Partner Portal (/courier)', 'डिलिव्हरी पार्टनर पोर्टल उघडा (/courier)')}</span>
-            <ExternalLink className="w-3 h-3 text-gold" />
-          </Link>
+          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => setCropModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-gold-light text-xs font-bold transition-all shadow-sm cursor-pointer"
+              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
+            >
+              <Scissors className="w-3.5 h-3.5 text-charcoal" />
+              <span>{tx('Crop Shiprocket Labels (A4)', 'शिपरोकेट लेबल्स क्रॉप करा (A4)')}</span>
+            </button>
+
+            <Link
+              href="/courier"
+              target="_blank"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-ivory text-xs font-semibold border border-white/20 transition-colors shadow-2xs"
+            >
+              <Truck className="w-3.5 h-3.5 text-gold" />
+              <span>{tx('Open Courier Partner Portal (/courier)', 'डिलिव्हरी पार्टनर पोर्टल उघडा (/courier)')}</span>
+              <ExternalLink className="w-3 h-3 text-gold" />
+            </Link>
+          </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2.5">
             <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">

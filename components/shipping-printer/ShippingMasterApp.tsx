@@ -6,7 +6,7 @@ import {
   ScanLine, Camera, CameraOff, Download, Trash2, Search, CheckCircle2,
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
-  X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser
+  X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
@@ -161,6 +161,12 @@ export default function ShippingMasterApp() {
   const [selectedBundleId, setSelectedBundleId] = useState<string>('');
   const [reprintModalOpen, setReprintModalOpen] = useState(false);
   const [reprintOrders, setReprintOrders] = useState<Order[]>([]);
+
+  // Shiprocket PDF Cropper State
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [cropLayout, setCropLayout] = useState<'4_on_1' | '2_on_1'>('4_on_1');
+  const [croppingBusy, setCroppingBusy] = useState(false);
 
   // Batch Multi-Scan Input State
   const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
@@ -451,6 +457,53 @@ export default function ShippingMasterApp() {
   function handlePrintSingle(entry: ShippingEntry) {
     setReprintOrders([entryToOrder(entry)]);
     setReprintModalOpen(true);
+  }
+
+  async function handleCropSubmit() {
+    if (!cropFile) {
+      alert(tx('Please select a Shiprocket PDF file.', 'कृपया शिपरोकेट PDF फाईल निवडा.'));
+      return;
+    }
+    setCroppingBusy(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', cropFile);
+      formData.append('layout', cropLayout);
+
+      const res = await fetch('/api/shipping/crop-labels', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to crop labels');
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Shiprocket_Labels_${cropLayout === '4_on_1' ? '4_on_A4' : '2_on_A4'}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      setCropModalOpen(false);
+      setCropFile(null);
+      beep(880, 120);
+      setFeedback({
+        kind: 'success',
+        order: 'Shiprocket Labels',
+        note: tx(
+          `Cropped ${cropLayout === '4_on_1' ? '4-on-1' : '2-on-1'} A4 PDF downloaded successfully! ✓`,
+          `क्रॉप केलेले ${cropLayout === '4_on_1' ? '४-ऑन-१' : '२-ऑन-१'} A4 PDF यशस्वीरित्या डाऊनलोड झाले! ✓`
+        ),
+      });
+    } catch (e: any) {
+      alert(e.message || 'Error processing PDF');
+    } finally {
+      setCroppingBusy(false);
+    }
   }
 
   async function handleBulkDelete() {
@@ -1518,7 +1571,17 @@ export default function ShippingMasterApp() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={() => setCropModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold transition-colors shadow-2xs cursor-pointer"
+              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
+            >
+              <Scissors className="w-4 h-4 text-amber-700" />
+              <span>{tx('Crop Shiprocket Labels', 'शिपरोकेट लेबल्स क्रॉप करा')}</span>
+            </button>
+
             <button
               onClick={exportCsv}
               disabled={visible.length === 0}
@@ -2422,6 +2485,170 @@ export default function ShippingMasterApp() {
                     `${selectedIds.length} ऑर्डर्स अपडेट करा`
                   )}
                 </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shiprocket PDF Cropper Modal */}
+      {cropModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-border-warm space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-100 text-amber-800">
+                  <Scissors className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-charcoal">
+                    {tx('Shiprocket Label Cropper & A4 Tiler', 'शिपरोकेट लेबल क्रॉपर आणि A4 शीट')}
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    {tx('Crops out transport labels and packs 4 labels on 1 A4 page', 'ट्रान्सपोर्ट लेबल्स क्रॉप करून एका A4 वर ४ लेबल्स बसवा')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCropModalOpen(false);
+                  setCropFile(null);
+                }}
+                className="p-1.5 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* File upload input */}
+              <div>
+                <label className="block text-xs font-semibold text-charcoal mb-1.5">
+                  {tx('Upload Shiprocket Combined Label PDF:', 'शिपरोकेट कम्बाईंड लेबल PDF अपलोड करा:')}
+                </label>
+                <div className="border-2 border-dashed border-border-warm hover:border-gold rounded-2xl p-6 text-center bg-ivory/40 transition-colors">
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        setCropFile(e.target.files[0]);
+                      }
+                    }}
+                    className="hidden"
+                    id="shiprocket-pdf-upload"
+                  />
+                  <label htmlFor="shiprocket-pdf-upload" className="cursor-pointer block">
+                    <Upload className="w-8 h-8 text-gold mx-auto mb-2" />
+                    {cropFile ? (
+                      <div>
+                        <span className="text-xs font-bold text-charcoal block truncate max-w-xs mx-auto">
+                          📄 {cropFile.name}
+                        </span>
+                        <span className="text-[11px] text-emerald-600 font-semibold mt-1 inline-block">
+                          {tx('File selected ✓ Click Generate below', 'फाईल निवडली ✓ खाली क्लिक करा')}
+                        </span>
+                      </div>
+                    ) : (
+                      <div>
+                        <span className="text-xs font-semibold text-charcoal hover:text-gold block">
+                          {tx('Click to choose Shiprocket PDF file', 'शिपरोकेट PDF फाईल निवडण्यासाठी क्लिक करा')}
+                        </span>
+                        <span className="text-[11px] text-charcoal-light block mt-0.5">
+                          {tx('(e.g. combined_label_invoice_....pdf)', '(उदा. combined_label_invoice_....pdf)')}
+                        </span>
+                      </div>
+                    )}
+                  </label>
+                </div>
+              </div>
+
+              {/* Layout option */}
+              <div>
+                <label className="block text-xs font-semibold text-charcoal mb-1.5">
+                  {tx('Choose Print Layout:', 'प्रिंट लेआउट निवडा:')}
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCropLayout('4_on_1')}
+                    className={`p-3 rounded-2xl border text-left transition-all ${
+                      cropLayout === '4_on_1'
+                        ? 'border-gold bg-gold/10 ring-2 ring-gold/30'
+                        : 'border-border-warm bg-white hover:bg-ivory'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-charcoal">
+                      {tx('4 Labels per A4 Sheet', 'A4 वर ४ लेबल्स')}
+                    </div>
+                    <div className="text-[10px] text-charcoal-light mt-0.5">
+                      {tx('2x2 Grid · Saves 75% paper · Best for standard A4', '२x२ ग्रिड · ७५% कागद वाचवतो')}
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setCropLayout('2_on_1')}
+                    className={`p-3 rounded-2xl border text-left transition-all ${
+                      cropLayout === '2_on_1'
+                        ? 'border-gold bg-gold/10 ring-2 ring-gold/30'
+                        : 'border-border-warm bg-white hover:bg-ivory'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-charcoal">
+                      {tx('2 Labels per A4 Sheet', 'A4 वर २ लेबल्स')}
+                    </div>
+                    <div className="text-[10px] text-charcoal-light mt-0.5">
+                      {tx('Large 1:1 original size · Extra big barcodes', '१:१ मूळ आकार · मोठे बारकोड')}
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Info alert */}
+              <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 text-[11px] text-amber-900 space-y-1">
+                <div className="font-semibold flex items-center gap-1 text-amber-950">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+                  {tx('What this does:', 'हे काय करते:')}
+                </div>
+                <p className="leading-relaxed">
+                  {tx(
+                    '• Crops the exact courier shipping label (AWB, order barcodes, delivery & return addresses).\n• Strips out the product price table, tax invoice, and footer terms completely.\n• Perfectly arranges 4 labels on a single A4 page for fast printing!',
+                    '• कुरिअर शिपिंग लेबल (AWB, बारकोड, पत्ते) अचूक क्रॉप करते.\n• प्रॉडक्ट प्राईस टेबल, टॅक्स इन्व्हॉईस आणि अटी पूर्णपणे काढून टाकते.\n• एका A4 वर ४ लेबल्स व्यवस्थित सेट करते!'
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-border-warm">
+              <button
+                type="button"
+                onClick={() => {
+                  setCropModalOpen(false);
+                  setCropFile(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors"
+              >
+                {tx('Cancel', 'रद्द करा')}
+              </button>
+              <button
+                type="button"
+                disabled={croppingBusy || !cropFile}
+                onClick={handleCropSubmit}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-bold hover:bg-charcoal/90 disabled:opacity-40 transition-colors shadow-xs"
+              >
+                {croppingBusy ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-gold" />
+                    <span>{tx('Cropping Labels…', 'क्रॉप होत आहे…')}</span>
+                  </>
+                ) : (
+                  <>
+                    <Scissors className="w-4 h-4 text-gold" />
+                    <span>{tx('Generate & Download Cropped A4 PDF', 'क्रॉप केलेले A4 PDF डाऊनलोड करा')}</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

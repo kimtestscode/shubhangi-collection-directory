@@ -33,7 +33,8 @@ function LoginForm() {
     const data = await res.json().catch(() => ({}));
 
     if (res.ok) {
-      window.location.href = from;
+      const destination = from && from !== '/admin' ? from : (data.redirectTo || '/admin');
+      window.location.href = destination;
     } else {
       setError(data.error || 'Incorrect credentials. Please try again.');
       setLoading(false);

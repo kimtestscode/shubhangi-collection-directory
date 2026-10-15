@@ -17,6 +17,7 @@ interface Props {
   orders: Order[];
   onBack: () => void;
   onClear: () => void;
+  backLabel?: string;
 }
 
 // ─── Shared print font ────────────────────────────────────────────────────────
@@ -193,7 +194,7 @@ function packIntoPages(measured: MeasuredOrder[]): LayoutPage[] {
 
 // ─── Main PrintPreview ────────────────────────────────────────────────────────
 
-export default function ShippingPrintPreview({ orders, onBack, onClear }: Props) {
+export default function ShippingPrintPreview({ orders, onBack, onClear, backLabel }: Props) {
   const [pages, setPages] = useState<LayoutPage[] | null>(null);
   const measureRef = useRef<HTMLDivElement>(null);
 
@@ -263,10 +264,10 @@ export default function ShippingPrintPreview({ orders, onBack, onClear }: Props)
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl border border-border-warm text-charcoal hover:bg-ivory-dark transition-colors font-medium"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-xl border border-border-warm text-charcoal hover:bg-ivory-dark transition-colors font-medium cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Review
+            {backLabel || 'Back to Review'}
           </button>
           <button
             onClick={() => window.print()}

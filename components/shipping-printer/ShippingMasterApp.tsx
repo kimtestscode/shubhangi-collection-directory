@@ -14,6 +14,47 @@ import {
   formatShippedAt, istDateKey, getTimeElapsed, getWhatsAppUrl,
   cleanMobileNumber, buildWhatsAppTrackingMessage
 } from '@/lib/shipping';
+import { Order } from '@/lib/address-printer/order';
+import ShippingPrintPreview from './ShippingPrintPreview';
+
+export interface PrintBundle {
+  id: string;
+  dateKey: string;
+  timeLabel: string;
+  dateLabel: string;
+  displayName: string;
+  orderIds: string[];
+  orderNumbers: string[];
+  count: number;
+  timestamp: number;
+}
+
+function entryToOrder(e: ShippingEntry): Order {
+  return {
+    id: e.id,
+    orderNumber: e.order_number,
+    to: {
+      name: e.customer_name || 'Customer',
+      address: e.customer_address || '',
+      city: e.customer_city || '',
+      pincode: e.customer_pincode || '',
+      mobile: e.customer_mobile || '',
+    },
+    from: {
+      rawBlock: 'Shubhangi Collection',
+    },
+    rawText: [
+      e.customer_name,
+      e.customer_mobile,
+      e.customer_address,
+      e.customer_city,
+      e.customer_pincode,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    warnings: [],
+  };
+}
 
 type Feedback =
   | { kind: 'success'; order: string; at?: string; note?: string }
@@ -115,6 +156,11 @@ export default function ShippingMasterApp() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
+
+  // Bundle Filtering & Bulk Reprint State
+  const [selectedBundleId, setSelectedBundleId] = useState<string>('');
+  const [reprintModalOpen, setReprintModalOpen] = useState(false);
+  const [reprintOrders, setReprintOrders] = useState<Order[]>([]);
 
   // Batch Multi-Scan Input State
   const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
@@ -384,6 +430,27 @@ export default function ShippingMasterApp() {
     } finally {
       setBulkBusy(false);
     }
+  }
+
+  function handleBulkPrintAgain() {
+    const selectedEntries = entries.filter((e) => selectedIds.includes(e.id));
+    if (selectedEntries.length === 0) {
+      alert(
+        tx(
+          'Please select at least 1 order to print.',
+          'कृपया प्रिंट करण्यासाठी किमान 1 ऑर्डर निवडा.'
+        )
+      );
+      return;
+    }
+    const ordersToPrint = selectedEntries.map(entryToOrder);
+    setReprintOrders(ordersToPrint);
+    setReprintModalOpen(true);
+  }
+
+  function handlePrintSingle(entry: ShippingEntry) {
+    setReprintOrders([entryToOrder(entry)]);
+    setReprintModalOpen(true);
   }
 
   async function handleBulkDelete() {
@@ -671,6 +738,160 @@ export default function ShippingMasterApp() {
     return { all: entries.length, pending, pickedUp, dispatched, delayed, totalShippingCost };
   }, [entries]);
 
+  // ─── Print Bundles & Batches Clustering ───────────────────────────────────
+  const bundles = useMemo<PrintBundle[]>(() => {
+    // Sort all entries by timestamp (printed_at || created_at) descending
+    const sorted = [...entries]
+      .filter((e) => Boolean(e.printed_at || e.created_at))
+      .sort((a, b) => {
+        const timeA = new Date(a.printed_at || a.created_at).getTime();
+        const timeB = new Date(b.printed_at || b.created_at).getTime();
+        return timeB - timeA;
+      });
+
+    if (sorted.length === 0) return [];
+
+    const clusters: ShippingEntry[][] = [];
+    let currentCluster: ShippingEntry[] = [];
+    let lastTime: number | null = null;
+    let lastDateKey: string | null = null;
+
+    // A bundle represents a paste/print session. Orders pasted together have near-identical timestamps.
+    // 15-minute clustering window within the same calendar date.
+    const CLUSTER_WINDOW_MS = 15 * 60 * 1000;
+
+    for (const entry of sorted) {
+      const rawDate = entry.printed_at || entry.created_at;
+      const t = new Date(rawDate).getTime();
+      const dKey = istDateKey(rawDate);
+
+      if (
+        lastTime === null ||
+        (lastDateKey === dKey && Math.abs(lastTime - t) <= CLUSTER_WINDOW_MS)
+      ) {
+        currentCluster.push(entry);
+      } else {
+        if (currentCluster.length > 0) {
+          clusters.push(currentCluster);
+        }
+        currentCluster = [entry];
+      }
+      lastTime = t;
+      lastDateKey = dKey;
+    }
+    if (currentCluster.length > 0) {
+      clusters.push(currentCluster);
+    }
+
+    const now = new Date();
+    const todayStr = istDateKey(now);
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yestStr = istDateKey(yesterday);
+
+    return clusters.map((cluster, idx) => {
+      const first = cluster[0];
+      const rawDate = first.printed_at || first.created_at;
+      const timestamp = new Date(rawDate).getTime();
+      const dateKey = istDateKey(rawDate);
+      const d = new Date(rawDate);
+
+      const timeLabel = d.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Kolkata',
+      });
+
+      let dateLabel = dateKey;
+      if (dateKey === todayStr) {
+        dateLabel = tx('Today', 'आज');
+      } else if (dateKey === yestStr) {
+        dateLabel = tx('Yesterday', 'काल');
+      } else {
+        dateLabel = d.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          timeZone: 'Asia/Kolkata',
+        });
+      }
+
+      const count = cluster.length;
+      const orderNumbers = cluster.map((e) => e.order_number);
+      const sample = orderNumbers.slice(0, 3).map((n) => `#${n}`).join(', ') + (count > 3 ? '…' : '');
+
+      return {
+        id: `bundle_${dateKey}_${idx}`,
+        dateKey,
+        timeLabel,
+        dateLabel,
+        displayName: `${dateLabel}, ${timeLabel} • ${count} ${count === 1 ? 'order' : 'orders'} (${sample})`,
+        orderIds: cluster.map((e) => e.id),
+        orderNumbers,
+        count,
+        timestamp,
+      };
+    });
+  }, [entries, isMr]);
+
+  const entryBundleMap = useMemo(() => {
+    const map = new Map<string, PrintBundle>();
+    for (const b of bundles) {
+      for (const id of b.orderIds) {
+        map.set(id, b);
+      }
+    }
+    return map;
+  }, [bundles]);
+
+  // Bundles filtered according to current date filter if active
+  const filteredBundles = useMemo(() => {
+    if (!filterDate) return bundles;
+    return bundles.filter((b) => b.dateKey === filterDate);
+  }, [bundles, filterDate]);
+
+  function handleSelectBundle(bundleId: string) {
+    setSelectedBundleId(bundleId);
+    if (!bundleId) return;
+
+    // Special: if "all_date", select all orders for this date
+    if (bundleId.startsWith('all_date_')) {
+      const targetDate = bundleId.replace('all_date_', '');
+      const dateEntries = entries.filter((e) => {
+        const rawDate = e.printed_at || e.created_at;
+        return istDateKey(rawDate) === targetDate;
+      });
+      setSelectedIds(dateEntries.map((e) => e.id));
+      beep(880, 80);
+      setFeedback({
+        kind: 'success',
+        order: `${dateEntries.length} orders`,
+        note: tx(
+          `All ${dateEntries.length} orders on ${targetDate} auto-selected ✓ Ready to Bulk Print or Update Date`,
+          `${targetDate} वरील सर्व ${dateEntries.length} ऑर्डर्स निवडल्या ✓ आता पुन्हा प्रिंट करा किंवा पिकअप तारीख बदला`
+        ),
+      });
+      return;
+    }
+
+    const bundle = bundles.find((b) => b.id === bundleId);
+    if (bundle) {
+      // Auto-select all orders in this bundle according to user request!
+      setSelectedIds(bundle.orderIds);
+      if (!filterDate) setFilterDate(bundle.dateKey);
+      beep(880, 80);
+      setFeedback({
+        kind: 'success',
+        order: `${bundle.count} orders`,
+        at: new Date(bundle.timestamp).toISOString(),
+        note: tx(
+          `Bundle auto-selected: ${bundle.count} orders (${bundle.dateLabel}, ${bundle.timeLabel}) ✓ Ready to Bulk Print or Update Date`,
+          `बंडल निवडले: ${bundle.count} ऑर्डर्स (${bundle.dateLabel}, ${bundle.timeLabel}) ✓ आता पुन्हा प्रिंट करा किंवा पिकअप तारीख बदला`
+        ),
+      });
+    }
+  }
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
@@ -685,6 +906,12 @@ export default function ShippingMasterApp() {
       const dateTarget = e.shipped_at || e.printed_at || e.created_at;
       if (filterDate && istDateKey(dateTarget) !== filterDate) return false;
 
+      // Bundle filter
+      if (selectedBundleId && !selectedBundleId.startsWith('all_date_')) {
+        const bundle = bundles.find((b) => b.id === selectedBundleId);
+        if (bundle && !bundle.orderIds.includes(e.id)) return false;
+      }
+
       // Search query across order number, customer name, mobile, docket
       if (!q) return true;
       return (
@@ -695,7 +922,7 @@ export default function ShippingMasterApp() {
         (e.handed_to ?? '').toLowerCase().includes(q)
       );
     });
-  }, [entries, statusTab, filterCourier, filterDate, search]);
+  }, [entries, statusTab, filterCourier, filterDate, search, selectedBundleId, bundles]);
 
   function exportCsv() {
     const esc = (v: string | null | undefined) => `"${(v ?? '').replace(/"/g, '""')}"`;
@@ -748,6 +975,21 @@ export default function ShippingMasterApp() {
   }
 
   const tableMissing = /shipping_master/i.test(loadError);
+
+  // ─── Fullscreen Reprint View ──────────────────────────────────────────────
+  if (reprintModalOpen && reprintOrders.length > 0) {
+    return (
+      <ShippingPrintPreview
+        orders={reprintOrders}
+        backLabel={tx('← Back to Shipping Master', '← शिपिंग मास्टरवर परत जा')}
+        onBack={() => setReprintModalOpen(false)}
+        onClear={() => {
+          setReprintModalOpen(false);
+          setSelectedIds([]);
+        }}
+      />
+    );
+  }
 
   // ─── UI ───────────────────────────────────────────────────────────────────
   return (
@@ -1219,14 +1461,59 @@ export default function ShippingMasterApp() {
               <input
                 type="date"
                 value={filterDate}
-                onChange={(e) => setFilterDate(e.target.value)}
+                onChange={(e) => {
+                  setFilterDate(e.target.value);
+                  setSelectedBundleId('');
+                }}
                 aria-label={tx('Filter by date', 'तारखेनुसार फिल्टर')}
                 className="pl-9 pr-3 py-2 text-xs sm:text-sm border border-border-warm rounded-xl focus:outline-none focus:border-gold"
               />
             </div>
             {filterDate && (
-              <button onClick={() => setFilterDate('')} className="text-xs text-gold font-semibold hover:underline">
+              <button
+                onClick={() => {
+                  setFilterDate('');
+                  setSelectedBundleId('');
+                }}
+                className="text-xs text-gold font-semibold hover:underline"
+              >
                 {tx('Clear date', 'तारीख काढा')}
+              </button>
+            )}
+
+            {/* Print Bundle / Batch Filter */}
+            <div className="relative">
+              <Layers className="w-4 h-4 text-amber-600 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <select
+                value={selectedBundleId}
+                onChange={(e) => handleSelectBundle(e.target.value)}
+                title={tx('Select a print batch/bundle to filter & auto-select orders', 'प्रिंट बॅच/बंडल फिल्टर करून ऑर्डर्स आपोआप निवडण्यासाठी निवडा')}
+                className={`pl-9 pr-3 py-2 text-xs sm:text-sm border rounded-xl bg-white font-medium focus:outline-none focus:border-gold max-w-[280px] truncate ${
+                  selectedBundleId
+                    ? 'border-amber-400 bg-amber-50/50 text-amber-900 font-semibold shadow-2xs'
+                    : 'border-border-warm text-charcoal'
+                }`}
+              >
+                <option value="">{tx('📦 All Batches / Bundles', '📦 सर्व बॅचेस / बंडल')}</option>
+                {filterDate && (
+                  <option value={`all_date_${filterDate}`}>
+                    ⚡ {tx(`Auto-select all on ${filterDate}`, `${filterDate} वरील सर्व ऑर्डर्स निवडा`)}
+                  </option>
+                )}
+                {filteredBundles.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.displayName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {selectedBundleId && (
+              <button
+                type="button"
+                onClick={() => setSelectedBundleId('')}
+                className="text-xs text-amber-700 font-semibold hover:underline"
+              >
+                {tx('Clear bundle', 'बंडल काढा')}
               </button>
             )}
           </div>
@@ -1295,12 +1582,12 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 disabled={bulkBusy}
-                onClick={handleBulkClearAddresses}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-medium border border-white/20 transition-colors disabled:opacity-50"
-                title={tx('Clear address details from selected orders', 'निवडलेल्या ऑर्डर्सचे पत्ते काढून टाका')}
+                onClick={handleBulkPrintAgain}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold hover:bg-gold-light text-charcoal text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                title={tx('Reprint A4 shipping address labels with QR for selected orders', 'निवडलेल्या ऑर्डर्सचे पत्ते आणि QR कोड पुन्हा प्रिंट करा')}
               >
-                <Eraser className="w-3.5 h-3.5 text-amber-300" />
-                <span>{tx('Delete Addresses', 'पत्ते हटवा')}</span>
+                <Printer className="w-3.5 h-3.5" />
+                <span>{tx('Bulk Print again', 'पुन्हा एकत्र प्रिंट करा')}</span>
               </button>
 
               <button
@@ -1398,6 +1685,32 @@ export default function ShippingMasterApp() {
                             {tx('Carrier', 'वाहक')}: <span className="font-medium text-charcoal">{e.handed_to}</span>
                           </div>
                         )}
+                        {/* Bundle Badge */}
+                        {(() => {
+                          const b = entryBundleMap.get(e.id);
+                          if (!b || b.count <= 1) return null;
+                          const isSelected = selectedBundleId === b.id;
+                          return (
+                            <div className="mt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectBundle(b.id)}
+                                className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-semibold transition-all border shadow-2xs cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-amber-600 text-white border-amber-700'
+                                    : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300'
+                                }`}
+                                title={tx(
+                                  `Click to filter & auto-select this batch of ${b.count} orders (${b.timeLabel})`,
+                                  `या बॅचमधील सर्व ${b.count} ऑर्डर्स निवडण्यासाठी क्लिक करा (${b.timeLabel})`
+                                )}
+                              >
+                                <Layers className="w-2.5 h-2.5" />
+                                <span>{tx(`Batch (${b.count} pcs)`, `बॅच (${b.count} ऑर्डर्स)`)}</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Customer Details & Address */}
@@ -1620,9 +1933,17 @@ export default function ShippingMasterApp() {
                         )}
                       </td>
 
-                      {/* Actions: Edit & Delete */}
+                      {/* Actions: Print, Edit & Delete */}
                       <td className="px-3 py-3 align-top text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handlePrintSingle(e)}
+                            className="p-1.5 text-charcoal-light hover:text-gold hover:bg-gold/10 rounded-lg transition-colors cursor-pointer"
+                            title={tx('Print label again with QR', 'लेबल पुन्हा प्रिंट करा')}
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             type="button"
                             onClick={() => openEditModal(e)}

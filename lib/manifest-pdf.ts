@@ -17,6 +17,14 @@ export interface ManifestOptions {
   parcels: ManifestParcelItem[];
 }
 
+/** Sanitize text to pure WinAnsi/ASCII printable characters for standard Helvetica */
+function cleanAscii(str: string | null | undefined): string {
+  if (!str) return '';
+  return str
+    .replace(/[^\x20-\x7E]/g, '') // strip non-ascii
+    .trim();
+}
+
 /**
  * Generates an A4 Portrait PDF containing 2 identical pickup manifest copies
  * (Top: Store Copy, Bottom: Transporter Copy) for the delivery person to sign.
@@ -32,7 +40,7 @@ export async function generatePickupManifestPdf(options: ManifestOptions): Promi
 
   const parcels = options.parcels || [];
   const pickupDate =
-    options.pickupDate ||
+    cleanAscii(options.pickupDate) ||
     new Date().toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata',
       day: '2-digit',
@@ -41,8 +49,8 @@ export async function generatePickupManifestPdf(options: ManifestOptions): Promi
       hour: '2-digit',
       minute: '2-digit',
     });
-  const transporter = options.transporterName || 'Shiprocket / Delhivery Surface';
-  const pickupLoc = options.pickupLocation || 'Kamothe, Navi Mumbai (410209)';
+  const transporter = cleanAscii(options.transporterName) || 'Shiprocket / Delhivery Surface';
+  const pickupLoc = cleanAscii(options.pickupLocation) || 'Kamothe, Navi Mumbai (410209)';
 
   // Max parcels per half page (6-7 fits comfortably with signature blocks)
   const ITEMS_PER_HALF = 6;
@@ -56,7 +64,7 @@ export async function generatePickupManifestPdf(options: ManifestOptions): Promi
     drawManifestHalf(page, {
       yOffset: HALF_HEIGHT,
       halfHeight: HALF_HEIGHT,
-      copyLabel: 'STORE / SENDER COPY (दुकान प्रत)',
+      copyLabel: 'STORE / SENDER COPY',
       copyColor: rgb(0.12, 0.44, 0.27), // deep forest green
       pageIdx: pageIdx + 1,
       totalPages,
@@ -77,7 +85,7 @@ export async function generatePickupManifestPdf(options: ManifestOptions): Promi
     drawManifestHalf(page, {
       yOffset: 0,
       halfHeight: HALF_HEIGHT,
-      copyLabel: 'TRANSPORTER / COURIER RIDER COPY (कुरिअर प्रत)',
+      copyLabel: 'TRANSPORTER / COURIER RIDER COPY',
       copyColor: rgb(0.15, 0.25, 0.45), // navy blue
       pageIdx: pageIdx + 1,
       totalPages,
@@ -105,8 +113,7 @@ function drawDottedLine(page: any, x1: number, y1: number, x2: number, y2: numbe
     dashArray: [4, 4],
   });
 
-  // Scissors icon text in center
-  const label = '✂ - - - - - - - - - - - CUT HERE / येथून कापा - - - - - - - - - - - ✂';
+  const label = '- - - - - - - - - - - - - - - - - - CUT HERE - - - - - - - - - - - - - - - - - -';
   const textWidth = font.widthOfTextAtSize(label, 7.5);
   const cx = (x1 + x2) / 2 - textWidth / 2;
 
@@ -195,11 +202,10 @@ function drawManifestHalf(page: any, p: DrawHalfParams) {
     width: badgeWidth,
     height: 13,
     color: p.copyColor,
-    borderRadius: 2,
   });
 
   page.drawText(p.copyLabel, {
-    x: marginX + contentWidth - badgeWidth + 2,
+    x: marginX + contentWidth - badgeWidth + 6,
     y: bannerY + 5.5,
     size: 7,
     font: p.fontBold,
@@ -208,7 +214,7 @@ function drawManifestHalf(page: any, p: DrawHalfParams) {
 
   // Metadata Row
   const metaY = bannerY - 16;
-  page.drawText(`Pickup Date: ${p.pickupDate}`, {
+  page.drawText(`Pickup Date: ${cleanAscii(p.pickupDate)}`, {
     x: marginX,
     y: metaY,
     size: 7.5,
@@ -216,7 +222,7 @@ function drawManifestHalf(page: any, p: DrawHalfParams) {
     color: rgb(0.2, 0.2, 0.2),
   });
 
-  page.drawText(`Courier / Transporter: ${p.transporter}`, {
+  page.drawText(`Courier / Transporter: ${cleanAscii(p.transporter)}`, {
     x: marginX + 170,
     y: metaY,
     size: 7.5,
@@ -280,11 +286,11 @@ function drawManifestHalf(page: any, p: DrawHalfParams) {
 
     const values = [
       String(p.startIdx + idx),
-      `#${item.order_number}`,
-      item.tracking_number || 'Pending AWB',
-      (item.customer_name || 'Customer').slice(0, 24),
-      (item.customer_city || '—').slice(0, 18),
-      item.customer_pincode || '—',
+      `#${cleanAscii(item.order_number)}`,
+      cleanAscii(item.tracking_number) || 'Pending AWB',
+      cleanAscii(item.customer_name || 'Customer').slice(0, 24),
+      cleanAscii(item.customer_city || '-').slice(0, 18),
+      cleanAscii(item.customer_pincode || '-'),
       item.weight_kg ? `${item.weight_kg} kg` : '0.20 kg',
     ];
 

@@ -6,7 +6,8 @@ import {
   ScanLine, Camera, CameraOff, Download, Trash2, Search, CheckCircle2,
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
-  X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors
+  X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors,
+  Rocket, FileText, CheckCheck
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
@@ -167,6 +168,20 @@ export default function ShippingMasterApp() {
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [cropLayout, setCropLayout] = useState<'4_on_1' | '2_on_1'>('4_on_1');
   const [croppingBusy, setCroppingBusy] = useState(false);
+
+  // Shiprocket API Dispatch & Courier Selection State
+  const [srDispatchOpen, setSrDispatchOpen] = useState(false);
+  const [srCheckingRates, setSrCheckingRates] = useState(false);
+  const [srBooking, setSrBooking] = useState(false);
+  const [srOrders, setSrOrders] = useState<any[]>([]);
+  const [srSuccessData, setSrSuccessData] = useState<{
+    results: any[];
+    label_url?: string | null;
+    cropped_pdf_base64?: string | null;
+  } | null>(null);
+
+  // Manifest Generation State
+  const [manifestBusy, setManifestBusy] = useState(false);
 
   // Batch Multi-Scan Input State
   const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
@@ -504,6 +519,258 @@ export default function ShippingMasterApp() {
     } finally {
       setCroppingBusy(false);
     }
+  }
+
+  // ─── Shiprocket Dispatch & Manifest Handlers ──────────────────────────────
+
+  async function handleOpenShiprocketDispatch() {
+    if (selectedIds.length === 0) return;
+    const selectedEntries = entries.filter((e) => selectedIds.includes(e.id));
+    if (selectedEntries.length === 0) return;
+
+    setSrDispatchOpen(true);
+    setSrCheckingRates(true);
+    setSrSuccessData(null);
+
+    const initialOrders = selectedEntries.map((e) => ({
+      order_number: e.order_number,
+      customer_name: e.customer_name || 'Customer',
+      customer_mobile: e.customer_mobile || '',
+      customer_address: e.customer_address || '',
+      customer_city: e.customer_city || '',
+      customer_pincode: e.customer_pincode || '',
+      weight_kg: 0.2,
+      available_couriers: [] as any[],
+      selected_courier: null as any,
+      error: '',
+    }));
+    setSrOrders(initialOrders);
+
+    try {
+      const res = await fetch('/api/shipping/shiprocket/check-rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orders: initialOrders.map((o) => ({
+            order_number: o.order_number,
+            customer_pincode: o.customer_pincode,
+            weight_kg: o.weight_kg,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to check rates');
+
+      const rateMap = new Map((data.results || []).map((r: any) => [r.order_number, r]));
+
+      setSrOrders((prev) =>
+        prev.map((o) => {
+          const rateInfo: any = rateMap.get(o.order_number);
+          if (!rateInfo) return o;
+          return {
+            ...o,
+            available_couriers: rateInfo.available_couriers || [],
+            selected_courier: rateInfo.selected_courier || null,
+            error: rateInfo.error || '',
+          };
+        })
+      );
+    } catch (err: any) {
+      alert(err.message || 'Error checking courier rates');
+    } finally {
+      setSrCheckingRates(false);
+    }
+  }
+
+  function handleSelectCourierForOrder(orderNumber: string, courierCompanyId: number) {
+    setSrOrders((prev) =>
+      prev.map((o) => {
+        if (o.order_number !== orderNumber) return o;
+        const found = o.available_couriers.find(
+          (c: any) => c.courier_company_id === courierCompanyId
+        );
+        return { ...o, selected_courier: found || null };
+      })
+    );
+  }
+
+  function handleBulkSetCourierPreference(type: 'delhivery' | 'cheapest') {
+    setSrOrders((prev) =>
+      prev.map((o) => {
+        if (!o.available_couriers || o.available_couriers.length === 0) return o;
+        if (type === 'delhivery') {
+          const delhivery =
+            o.available_couriers.find((c: any) => /delhivery.*surface/i.test(c.courier_name)) ||
+            o.available_couriers.find((c: any) => /delhivery/i.test(c.courier_name));
+          if (delhivery) return { ...o, selected_courier: delhivery };
+        }
+        const sorted = [...o.available_couriers].sort((a: any, b: any) => a.rate - b.rate);
+        return { ...o, selected_courier: sorted[0] || o.selected_courier };
+      })
+    );
+  }
+
+  async function handleConfirmShiprocketBooking() {
+    const validOrders = srOrders.filter((o) => o.selected_courier && !o.error);
+    if (validOrders.length === 0) {
+      alert('No valid orders with assigned couriers to book.');
+      return;
+    }
+
+    setSrBooking(true);
+    try {
+      const res = await fetch('/api/shipping/shiprocket/create-shipments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orders: validOrders.map((o) => ({
+            order_number: o.order_number,
+            customer_name: o.customer_name,
+            customer_address: o.customer_address,
+            customer_city: o.customer_city,
+            customer_pincode: o.customer_pincode,
+            customer_mobile: o.customer_mobile,
+            courier_company_id: o.selected_courier.courier_company_id,
+            declared_value: 299,
+            weight_kg: o.weight_kg || 0.2,
+          })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to book shipments');
+
+      setSrSuccessData(data);
+
+      // Auto-trigger download of cropped 4-on-1 A4 labels
+      if (data.cropped_pdf_base64) {
+        downloadBase64Pdf(
+          data.cropped_pdf_base64,
+          `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
+        );
+      }
+
+      beep(880, 150);
+      loadEntries();
+    } catch (err: any) {
+      alert(err.message || 'Error booking shipments on Shiprocket');
+    } finally {
+      setSrBooking(false);
+    }
+  }
+
+  function downloadBase64Pdf(base64: string, filename: string) {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  async function handlePrintManifestForParcels(parcelList: Array<{
+    order_number: string;
+    tracking_number?: string | null;
+    customer_name?: string | null;
+    customer_city?: string | null;
+    customer_pincode?: string | null;
+    courier_name?: string | null;
+  }>) {
+    if (!parcelList || parcelList.length === 0) {
+      alert(tx('No parcels available to generate pickup manifest.', 'मॅनिफेस्ट तयार करण्यासाठी पार्सल्स उपलब्ध नाहीत.'));
+      return;
+    }
+
+    setManifestBusy(true);
+    try {
+      const res = await fetch('/api/shipping/manifest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parcels: parcelList.map((p) => ({
+            order_number: p.order_number,
+            tracking_number: p.tracking_number || '',
+            customer_name: p.customer_name || 'Customer',
+            customer_city: p.customer_city || '—',
+            customer_pincode: p.customer_pincode || '—',
+            weight_kg: 0.2,
+            courier_name: p.courier_name || 'Courier',
+          })),
+          pickupDate: new Date().toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          transporterName: 'Shiprocket Transporter',
+          pickupLocation: 'Kamothe, Navi Mumbai (410209)',
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to generate manifest');
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Pickup_Manifest_2_on_1_${Date.now()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Error generating pickup manifest');
+    } finally {
+      setManifestBusy(false);
+    }
+  }
+
+  function handlePrintManifestForSelected() {
+    if (selectedIds.length === 0) return;
+    const selectedEntries = entries.filter((e) => selectedIds.includes(e.id));
+    handlePrintManifestForParcels(
+      selectedEntries.map((e) => ({
+        order_number: e.order_number,
+        tracking_number: e.tracking_number,
+        customer_name: e.customer_name,
+        customer_city: e.customer_city,
+        customer_pincode: e.customer_pincode,
+        courier_name: e.notes || e.courier_partner,
+      }))
+    );
+  }
+
+  function handlePrintManifestForToday() {
+    const todayParcels = entries.filter(
+      (e) =>
+        e.status !== 'pending' &&
+        istDateKey(e.shipped_at || e.created_at) === pickupDate
+    );
+    if (todayParcels.length === 0) {
+      const pickedUp = entries.filter((e) => e.status !== 'pending');
+      if (pickedUp.length === 0) {
+        alert(tx('No picked-up parcels found to print manifest.', 'मॅनिफेस्ट प्रिंट करण्यासाठी कोणतेही पिकअप झालेले पार्सल सापडले नाहीत.'));
+        return;
+      }
+      handlePrintManifestForParcels(pickedUp);
+      return;
+    }
+    handlePrintManifestForParcels(todayParcels);
   }
 
   async function handleBulkDelete() {
@@ -1070,6 +1337,17 @@ export default function ShippingMasterApp() {
           <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
             <button
               type="button"
+              disabled={manifestBusy}
+              onClick={handlePrintManifestForToday}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-white text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+              title={tx('Generate 2-in-1 A4 portrait pickup manifest for delivery person signature', 'डिलिव्हरी बॉयच्या सहीसाठी २-इन-१ A4 मॅनिफेस्ट प्रिंट करा')}
+            >
+              {manifestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+              <span>{tx('Print Manifest (2-in-1 A4)', 'मॅनिफेस्ट प्रिंट (२-इन-१)')}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setCropModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-gold-light text-xs font-bold transition-all shadow-sm cursor-pointer"
               title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
@@ -1586,6 +1864,17 @@ export default function ShippingMasterApp() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
+              disabled={manifestBusy}
+              onClick={handlePrintManifestForToday}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-900 font-semibold transition-colors shadow-2xs cursor-pointer disabled:opacity-50"
+              title={tx('Generate 2-in-1 A4 portrait pickup manifest for today\'s pickup', 'आजच्या पिकअपसाठी २-इन-१ मॅनिफेस्ट प्रिंट करा')}
+            >
+              {manifestBusy ? <Loader2 className="w-4 h-4 animate-spin text-sky-700" /> : <FileText className="w-4 h-4 text-sky-700" />}
+              <span>{tx('Print Manifest (2-in-1)', 'मॅनिफेस्ट प्रिंट (२-इन-१)')}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setCropModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold transition-colors shadow-2xs cursor-pointer"
               title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
@@ -1644,6 +1933,28 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 disabled={bulkBusy}
+                onClick={handleOpenShiprocketDispatch}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                title={tx('Select couriers and book shipments via Shiprocket', 'शिपरोकेटद्वारे कुरिअर निवडून पाठवा')}
+              >
+                <Rocket className="w-3.5 h-3.5 text-amber-300" />
+                <span>{tx('Ship via Shiprocket', 'शिपरोकेटने पाठवा')}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={manifestBusy}
+                onClick={handlePrintManifestForSelected}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                title={tx('Generate 2-in-1 A4 portrait pickup manifest for delivery person signature', 'डिलिव्हरी बॉयच्या सहीसाठी २-इन-१ A4 मॅनिफेस्ट प्रिंट करा')}
+              >
+                {manifestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+                <span>{tx('Print Manifest (2-in-1)', 'मॅनिफेस्ट प्रिंट करा')}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={bulkBusy}
                 onClick={() => {
                   setBulkTargetDate(pickupDate || getTodayDateStr());
                   setBulkDateModalOpen(true);
@@ -1658,7 +1969,7 @@ export default function ShippingMasterApp() {
                 type="button"
                 disabled={bulkBusy}
                 onClick={handleBulkPrintAgain}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gold hover:bg-gold-light text-charcoal text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold hover:bg-gold-light text-charcoal text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
                 title={tx('Reprint A4 shipping address labels with QR for selected orders', 'निवडलेल्या ऑर्डर्सचे पत्ते आणि QR कोड पुन्हा प्रिंट करा')}
               >
                 <Printer className="w-3.5 h-3.5" />
@@ -2663,6 +2974,320 @@ export default function ShippingMasterApp() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shiprocket Dispatch & Courier Selection Modal */}
+      {srDispatchOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-5 sm:p-7 shadow-2xl border border-border-warm space-y-5 my-6 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-purple-100 text-purple-700">
+                  <Rocket className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-charcoal flex items-center gap-2">
+                    <span>{tx('Shiprocket Dispatch & Courier Allocation', 'शिपरोकेट डिस्पॅच आणि कुरिअर निवड')}</span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                      Live API
+                    </span>
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    {tx('Review and select delivery partners for each parcel before confirming AWBs', 'AWB बनवण्यापूर्वी प्रत्येक पार्सलसाठी डिलिव्हरी पार्टनर तपासा आणि निवडा')}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSrDispatchOpen(false);
+                  setSrSuccessData(null);
+                }}
+                className="p-1.5 rounded-xl hover:bg-ivory text-charcoal-light hover:text-charcoal transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content State: Loading / Checking Rates */}
+            {srCheckingRates && (
+              <div className="py-16 text-center space-y-3">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-600 mx-auto" />
+                <div className="text-sm font-bold text-charcoal">
+                  {tx('Checking Courier Serviceability & Live Rates…', 'कुरिअर सर्व्हिस आणि चालू दर तपासत आहे…')}
+                </div>
+                <div className="text-xs text-charcoal-light max-w-md mx-auto">
+                  {tx('Contacting Shiprocket for available surface & air couriers (Delhivery, DTDC, Xpressbees, Blue Dart) from Kamothe (410209)…', 'कामोठे (४१०२०९) वरून उपलब्ध कुरिअर्सचे थेट दर मिळवत आहोत…')}
+                </div>
+              </div>
+            )}
+
+            {/* Content State: Booking Success */}
+            {srSuccessData && !srCheckingRates && (
+              <div className="space-y-5">
+                <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 flex items-start gap-3 text-emerald-950">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs sm:text-sm space-y-1">
+                    <div className="font-bold">
+                      {tx(
+                        'Shipments Booked Successfully on Shiprocket! ✓',
+                        'शिपरोकेटवर शिपमेंट्स यशस्वीरित्या बुक झाल्या! ✓'
+                      )}
+                    </div>
+                    <div className="text-emerald-800">
+                      {tx(
+                        'AWB numbers are registered, shipping master is updated to Picked Up, and your clean 4-on-1 A4 labels have been prepared.',
+                        'AWB नंबर जोडले गेले आहेत, शिपिंग मास्टर अपडेट झाले आहे आणि ४-ऑन-१ A4 लेबल्स तयार झाली आहेत.'
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Booked Parcels List */}
+                <div className="border border-border-warm rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm">
+                      <tr>
+                        <th className="py-2.5 px-3">Order #</th>
+                        <th className="py-2.5 px-3">Assigned Courier</th>
+                        <th className="py-2.5 px-3">AWB Tracking #</th>
+                        <th className="py-2.5 px-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-warm">
+                      {srSuccessData.results.map((res: any, idx: number) => (
+                        <tr key={idx} className="hover:bg-ivory/50">
+                          <td className="py-2 px-3 font-bold text-charcoal">#{res.order_number}</td>
+                          <td className="py-2 px-3 text-charcoal font-medium">{res.courier_name || '—'}</td>
+                          <td className="py-2 px-3 font-mono font-bold text-sky-700">
+                            {res.awb_code ? (
+                              <a
+                                href={res.tracking_url || `https://shiprocket.co/tracking/${res.awb_code}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:underline flex items-center gap-1"
+                              >
+                                <span>{res.awb_code}</span>
+                                <ExternalLink className="w-3 h-3 text-sky-600" />
+                              </a>
+                            ) : (
+                              <span className="text-red-600">{res.error || 'Failed'}</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3">
+                            {res.success ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                <Check className="w-3 h-3" /> Booked
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-bold text-red-600">Failed</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Primary Action Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  {srSuccessData.cropped_pdf_base64 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadBase64Pdf(
+                          srSuccessData.cropped_pdf_base64!,
+                          `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
+                        )
+                      }
+                      className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-gold hover:bg-gold-light text-charcoal font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                    >
+                      <Scissors className="w-4 h-4 text-charcoal" />
+                      <span>{tx('Download 4-on-1 Clean Labels PDF (A4)', '४-ऑन-१ A4 लेबल्स पुन्हा डाऊनलोड करा')}</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={manifestBusy}
+                    onClick={() =>
+                      handlePrintManifestForParcels(
+                        srSuccessData.results.map((r: any) => ({
+                          order_number: r.order_number,
+                          tracking_number: r.awb_code,
+                          courier_name: r.courier_name,
+                        }))
+                      )
+                    }
+                    className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {manifestBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                    <span>{tx('Print Pickup Manifest (2-in-1 A4 Sign Sheet)', 'डिलिव्हरी बॉयसाठी २-इन-१ मॅनिफेस्ट प्रिंट करा')}</span>
+                  </button>
+                </div>
+
+                <div className="flex justify-end pt-2 border-t border-border-warm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSrDispatchOpen(false);
+                      setSrSuccessData(null);
+                    }}
+                    className="px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 transition-colors"
+                  >
+                    {tx('Done & Return to Shipping Master', 'पूर्ण झाले')}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Content State: Interactive Selection Table */}
+            {!srCheckingRates && !srSuccessData && (
+              <div className="space-y-4">
+                {/* Batch Preferences Bar */}
+                <div className="flex items-center justify-between flex-wrap gap-2 p-3 rounded-2xl bg-purple-50/60 border border-purple-200 text-xs">
+                  <div className="font-semibold text-purple-900 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    <span>{tx('Quick Bulk Courier Selection:', 'जलद कुरिअर निवड:')}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleBulkSetCourierPreference('delhivery')}
+                      className="px-3 py-1 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
+                    >
+                      {tx('Prefer Delhivery Surface', 'सर्व्हिस: दिल्लीवरी प्राधान्य')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleBulkSetCourierPreference('cheapest')}
+                      className="px-3 py-1 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
+                    >
+                      {tx('Pick Cheapest for All', 'सर्वात स्वस्त कुरिअर निवडा')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Orders Table */}
+                <div className="border border-border-warm rounded-2xl overflow-hidden max-h-80 overflow-y-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm sticky top-0 z-10">
+                      <tr>
+                        <th className="py-2.5 px-3">Order #</th>
+                        <th className="py-2.5 px-3">Customer & Area</th>
+                        <th className="py-2.5 px-3">Pincode</th>
+                        <th className="py-2.5 px-3">Select Delivery Partner</th>
+                        <th className="py-2.5 px-3">Freight (₹)</th>
+                        <th className="py-2.5 px-3">Est. Delivery</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border-warm">
+                      {srOrders.map((ord: any) => (
+                        <tr key={ord.order_number} className="hover:bg-ivory/40">
+                          <td className="py-2.5 px-3 font-bold text-charcoal">#{ord.order_number}</td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-semibold text-charcoal">{ord.customer_name}</div>
+                            <div className="text-[11px] text-charcoal-light">{ord.customer_city || '—'}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono font-bold text-charcoal">
+                            {ord.customer_pincode || '—'}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            {ord.error ? (
+                              <span className="text-[11px] text-red-600 font-medium">{ord.error}</span>
+                            ) : ord.available_couriers && ord.available_couriers.length > 0 ? (
+                              <select
+                                value={ord.selected_courier?.courier_company_id || ''}
+                                onChange={(e) =>
+                                  handleSelectCourierForOrder(
+                                    ord.order_number,
+                                    Number(e.target.value)
+                                  )
+                                }
+                                className="border border-border-warm rounded-xl px-2.5 py-1.5 text-xs bg-white text-charcoal font-medium focus:outline-none focus:border-purple-600 focus:ring-1 focus:ring-purple-600/30 max-w-[220px]"
+                              >
+                                {ord.available_couriers.map((c: any) => (
+                                  <option key={c.courier_company_id} value={c.courier_company_id}>
+                                    {c.courier_name} — ₹{c.rate} ({c.etd})
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-[11px] text-amber-700">No couriers serviceable</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-bold font-mono text-charcoal">
+                            {ord.selected_courier ? `₹${ord.selected_courier.rate}` : '—'}
+                          </td>
+                          <td className="py-2.5 px-3 text-[11px] text-charcoal-light">
+                            {ord.selected_courier?.etd || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Pickup Location & Summary Banner */}
+                <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-charcoal-light px-1">
+                  <div>
+                    <span>{tx('Pickup Location:', 'पिकअप ठिकाण:')} </span>
+                    <strong className="text-charcoal">My Shop (Kamothe, 410209)</strong>
+                    <span className="ml-2 font-mono">· Mob: 9773915478</span>
+                  </div>
+                  <div>
+                    <span>{tx('Total Orders to Book:', 'एकूण ऑर्डर्स:')} </span>
+                    <strong className="text-purple-900 font-bold font-mono">{srOrders.length}</strong>
+                    <span className="ml-3">{tx('Estimated Freight:', 'अंदाजे कुरिअर खर्च:')} </span>
+                    <strong className="text-emerald-800 font-bold font-mono text-sm">
+                      ₹
+                      {srOrders
+                        .reduce((sum, o) => sum + (o.selected_courier?.rate || 0), 0)
+                        .toFixed(2)}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* Footer Controls */}
+                <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-warm">
+                  <button
+                    type="button"
+                    onClick={() => setSrDispatchOpen(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors cursor-pointer"
+                  >
+                    {tx('Cancel', 'रद्द करा')}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={srBooking || srOrders.every((o) => !o.selected_courier)}
+                    onClick={handleConfirmShiprocketBooking}
+                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer disabled:opacity-40"
+                  >
+                    {srBooking ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>{tx('Booking Shipments & Generating AWBs…', 'बुक होत आहे…')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Rocket className="w-4 h-4 text-amber-300" />
+                        <span>
+                          {tx(
+                            `Confirm & Book ${srOrders.length} Shipments`,
+                            `${srOrders.length} शिपमेंट्स बुक करा`
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

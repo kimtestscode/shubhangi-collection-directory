@@ -66,6 +66,29 @@ export function getPickupLocationName(): string {
 }
 
 /**
+ * Fetch current available wallet balance from Shiprocket account.
+ */
+export async function getShiprocketWalletBalance(): Promise<number> {
+  try {
+    const token = await getShiprocketToken();
+    const res = await fetch('https://apiv2.shiprocket.in/v1/external/account/details/wallet-balance', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!res.ok) return 0;
+    const json = await res.json();
+    const balance = Number(json.data?.balance_amount);
+    return isNaN(balance) ? 0 : balance;
+  } catch (err) {
+    console.error('Failed to fetch Shiprocket wallet balance:', err);
+    return 0;
+  }
+}
+
+/**
  * Check courier serviceability and rates for a given destination pincode from Kamothe (410209).
  */
 export async function checkCourierServiceability(

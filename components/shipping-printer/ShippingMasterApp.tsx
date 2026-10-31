@@ -7,7 +7,7 @@ import {
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
   X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors,
-  Rocket, FileText, CheckCheck
+  Rocket, FileText, CheckCheck, Wallet
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
@@ -174,6 +174,7 @@ export default function ShippingMasterApp() {
   const [srCheckingRates, setSrCheckingRates] = useState(false);
   const [srBooking, setSrBooking] = useState(false);
   const [srOrders, setSrOrders] = useState<any[]>([]);
+  const [srWalletBalance, setSrWalletBalance] = useState<number | null>(null);
   const [srSuccessData, setSrSuccessData] = useState<{
     results: any[];
     label_url?: string | null;
@@ -531,6 +532,7 @@ export default function ShippingMasterApp() {
     setSrDispatchOpen(true);
     setSrCheckingRates(true);
     setSrSuccessData(null);
+    setSrWalletBalance(null);
 
     const initialOrders = selectedEntries.map((e) => {
       const cleanPin = (e.customer_pincode || '').replace(/\D/g, '').slice(-6);
@@ -564,6 +566,10 @@ export default function ShippingMasterApp() {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to check rates');
+
+      if (typeof data.wallet_balance === 'number') {
+        setSrWalletBalance(data.wallet_balance);
+      }
 
       const rateMap = new Map((data.results || []).map((r: any) => [r.order_number, r]));
 
@@ -2982,338 +2988,423 @@ export default function ShippingMasterApp() {
       )}
 
       {/* Shiprocket Dispatch & Courier Selection Modal */}
-      {srDispatchOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-4xl w-full p-5 sm:p-7 shadow-2xl border border-border-warm space-y-5 my-6 animate-in fade-in zoom-in-95 duration-150">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2.5 rounded-2xl bg-purple-100 text-purple-700">
-                  <Rocket className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base sm:text-lg font-bold text-charcoal flex items-center gap-2">
-                    <span>{tx('Shiprocket Dispatch & Courier Allocation', 'शिपरोकेट डिस्पॅच आणि कुरिअर निवड')}</span>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
-                      Live API
-                    </span>
-                  </h3>
-                  <p className="text-xs text-charcoal-light">
-                    {tx('Review and select delivery partners for each parcel before confirming AWBs', 'AWB बनवण्यापूर्वी प्रत्येक पार्सलसाठी डिलिव्हरी पार्टनर तपासा आणि निवडा')}
-                  </p>
-                </div>
-              </div>
+      {srDispatchOpen && (() => {
+        const totalFreight = srOrders.reduce((sum, o) => sum + (o.selected_courier?.rate || 0), 0);
+        const isBalanceInsufficient = srWalletBalance !== null && srWalletBalance < totalFreight;
 
-              <button
-                type="button"
-                onClick={() => {
-                  setSrDispatchOpen(false);
-                  setSrSuccessData(null);
-                }}
-                className="p-1.5 rounded-xl hover:bg-ivory text-charcoal-light hover:text-charcoal transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Content State: Loading / Checking Rates */}
-            {srCheckingRates && (
-              <div className="py-16 text-center space-y-3">
-                <Loader2 className="w-8 h-8 animate-spin text-purple-600 mx-auto" />
-                <div className="text-sm font-bold text-charcoal">
-                  {tx('Checking Courier Serviceability & Live Rates…', 'कुरिअर सर्व्हिस आणि चालू दर तपासत आहे…')}
-                </div>
-                <div className="text-xs text-charcoal-light max-w-md mx-auto">
-                  {tx('Contacting Shiprocket for available surface & air couriers (Delhivery, DTDC, Xpressbees, Blue Dart) from Kamothe (410209)…', 'कामोठे (४१०२०९) वरून उपलब्ध कुरिअर्सचे थेट दर मिळवत आहोत…')}
-                </div>
-              </div>
-            )}
-
-            {/* Content State: Booking Success */}
-            {srSuccessData && !srCheckingRates && (
-              <div className="space-y-5">
-                <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 flex items-start gap-3 text-emerald-950">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
-                  <div className="text-xs sm:text-sm space-y-1">
-                    <div className="font-bold">
-                      {tx(
-                        'Shipments Booked Successfully on Shiprocket! ✓',
-                        'शिपरोकेटवर शिपमेंट्स यशस्वीरित्या बुक झाल्या! ✓'
-                      )}
-                    </div>
-                    <div className="text-emerald-800">
-                      {tx(
-                        'AWB numbers are registered, shipping master is updated to Picked Up, and your clean 4-on-1 A4 labels have been prepared.',
-                        'AWB नंबर जोडले गेले आहेत, शिपिंग मास्टर अपडेट झाले आहे आणि ४-ऑन-१ A4 लेबल्स तयार झाली आहेत.'
-                      )}
-                    </div>
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-5xl xl:max-w-6xl w-full p-5 sm:p-7 shadow-2xl border border-border-warm space-y-5 my-6 animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-border-warm gap-3 flex-wrap">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 rounded-2xl bg-purple-100 text-purple-700">
+                    <Rocket className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold text-charcoal flex items-center gap-2">
+                      <span>{tx('Shiprocket Dispatch & Courier Allocation', 'शिपरोकेट डिस्पॅच आणि कुरिअर निवड')}</span>
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                        Live API
+                      </span>
+                    </h3>
+                    <p className="text-xs text-charcoal-light">
+                      {tx('Review and select delivery partners for each parcel before confirming AWBs', 'AWB बनवण्यापूर्वी प्रत्येक पार्सलसाठी डिलिव्हरी पार्टनर तपासा आणि निवडा')}
+                    </p>
                   </div>
                 </div>
 
-                {/* Booked Parcels List */}
-                <div className="border border-border-warm rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm">
-                      <tr>
-                        <th className="py-2.5 px-3">Order #</th>
-                        <th className="py-2.5 px-3">Assigned Courier</th>
-                        <th className="py-2.5 px-3">AWB Tracking #</th>
-                        <th className="py-2.5 px-3">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border-warm">
-                      {srSuccessData.results.map((res: any, idx: number) => (
-                        <tr key={idx} className="hover:bg-ivory/50">
-                          <td className="py-2 px-3 font-bold text-charcoal">#{res.order_number}</td>
-                          <td className="py-2 px-3 text-charcoal font-medium">{res.courier_name || '—'}</td>
-                          <td className="py-2 px-3 font-mono font-bold text-sky-700">
-                            {res.awb_code ? (
-                              <a
-                                href={res.tracking_url || `https://shiprocket.co/tracking/${res.awb_code}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="hover:underline flex items-center gap-1"
-                              >
-                                <span>{res.awb_code}</span>
-                                <ExternalLink className="w-3 h-3 text-sky-600" />
-                              </a>
-                            ) : (
-                              <span className="text-red-600">{res.error || 'Failed'}</span>
-                            )}
-                          </td>
-                          <td className="py-2 px-3">
-                            {res.success ? (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                                <Check className="w-3 h-3" /> Booked
-                              </span>
-                            ) : (
-                              <span className="text-[11px] font-bold text-red-600">Failed</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  {srWalletBalance !== null && (
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors ${
+                          isBalanceInsufficient
+                            ? 'bg-red-50 text-red-700 border-red-300'
+                            : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        }`}
+                        title="Current Shiprocket Prepaid Wallet Balance"
+                      >
+                        <Wallet className="w-3.5 h-3.5 text-current" />
+                        <span>{tx('Wallet Balance:', 'वॉलेट शिल्लक:')} </span>
+                        <span className="font-mono text-sm font-extrabold">₹{srWalletBalance.toFixed(2)}</span>
+                      </div>
 
-                {/* Primary Action Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  {srSuccessData.cropped_pdf_base64 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        downloadBase64Pdf(
-                          srSuccessData.cropped_pdf_base64!,
-                          `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
-                        )
-                      }
-                      className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-gold hover:bg-gold-light text-charcoal font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
-                    >
-                      <Scissors className="w-4 h-4 text-charcoal" />
-                      <span>{tx('Download 4-on-1 Clean Labels PDF (A4)', '४-ऑन-१ A4 लेबल्स पुन्हा डाऊनलोड करा')}</span>
-                    </button>
+                      <a
+                        href="https://app.shiprocket.in/recharge-wallet"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-900 text-xs font-bold transition-colors cursor-pointer"
+                        title={tx('Open Shiprocket to recharge wallet', 'वॉलेट रिचार्ज करण्यासाठी शिपरोकेट उघडा')}
+                      >
+                        <span>{tx('+ Recharge', '+ रिचार्ज')}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   )}
 
-                  <button
-                    type="button"
-                    disabled={manifestBusy}
-                    onClick={() =>
-                      handlePrintManifestForParcels(
-                        srSuccessData.results.map((r: any) => ({
-                          order_number: r.order_number,
-                          tracking_number: r.awb_code,
-                          courier_name: r.courier_name,
-                        }))
-                      )
-                    }
-                    className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                  >
-                    {manifestBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                    <span>{tx('Print Pickup Manifest (2-in-1 A4 Sign Sheet)', 'डिलिव्हरी बॉयसाठी २-इन-१ मॅनिफेस्ट प्रिंट करा')}</span>
-                  </button>
-                </div>
-
-                <div className="flex justify-end pt-2 border-t border-border-warm">
                   <button
                     type="button"
                     onClick={() => {
                       setSrDispatchOpen(false);
                       setSrSuccessData(null);
                     }}
-                    className="px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 transition-colors"
+                    className="p-1.5 rounded-xl hover:bg-ivory text-charcoal-light hover:text-charcoal transition-colors cursor-pointer"
                   >
-                    {tx('Done & Return to Shipping Master', 'पूर्ण झाले')}
+                    <X className="w-5 h-5" />
                   </button>
                 </div>
               </div>
-            )}
 
-            {/* Content State: Interactive Selection Table */}
-            {!srCheckingRates && !srSuccessData && (
-              <div className="space-y-4">
-                {/* Batch Preferences Bar */}
-                <div className="flex items-center justify-between flex-wrap gap-2 p-3 rounded-2xl bg-purple-50/60 border border-purple-200 text-xs">
-                  <div className="font-semibold text-purple-900 flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-purple-600" />
-                    <span>{tx('Quick Bulk Courier Selection:', 'जलद कुरिअर निवड:')}</span>
+              {/* Content State: Loading / Checking Rates */}
+              {srCheckingRates && (
+                <div className="py-16 text-center space-y-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-purple-600 mx-auto" />
+                  <div className="text-sm font-bold text-charcoal">
+                    {tx('Checking Courier Serviceability & Live Rates…', 'कुरिअर सर्व्हिस आणि चालू दर तपासत आहे…')}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleBulkSetCourierPreference('delhivery')}
-                      className="px-3 py-1 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
-                    >
-                      {tx('Prefer Delhivery Surface', 'सर्व्हिस: दिल्लीवरी प्राधान्य')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleBulkSetCourierPreference('cheapest')}
-                      className="px-3 py-1 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
-                    >
-                      {tx('Pick Cheapest for All', 'सर्वात स्वस्त कुरिअर निवडा')}
-                    </button>
+                  <div className="text-xs text-charcoal-light max-w-md mx-auto">
+                    {tx('Contacting Shiprocket for available surface & air couriers (Delhivery, DTDC, Xpressbees, Blue Dart) from Kamothe (410209)…', 'कामोठे (४१०२०९) वरून उपलब्ध कुरिअर्सचे थेट दर मिळवत आहोत…')}
                   </div>
                 </div>
+              )}
 
-                {/* Orders Table */}
-                <div className="border border-border-warm rounded-2xl overflow-hidden max-h-80 overflow-y-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm sticky top-0 z-10">
-                      <tr>
-                        <th className="py-2.5 px-3">Order #</th>
-                        <th className="py-2.5 px-3">Customer & Delivery Address</th>
-                        <th className="py-2.5 px-3">Pincode</th>
-                        <th className="py-2.5 px-3">Select Delivery Partner</th>
-                        <th className="py-2.5 px-3">Freight (₹)</th>
-                        <th className="py-2.5 px-3">Est. Delivery</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border-warm">
-                      {srOrders.map((ord: any) => (
-                        <tr key={ord.order_number} className="hover:bg-ivory/40">
-                          <td className="py-2.5 px-3 font-bold text-charcoal">#{ord.order_number}</td>
-                          <td className="py-2.5 px-3 max-w-[280px]">
-                            <div className="font-semibold text-charcoal flex items-center gap-1.5 flex-wrap">
-                              <span>{ord.customer_name}</span>
-                              {ord.customer_mobile && (
-                                <span className="text-[10px] font-mono font-normal text-charcoal-light bg-black/5 px-1.5 py-0.2 rounded">
-                                  {ord.customer_mobile}
-                                </span>
-                              )}
-                            </div>
-                            {ord.customer_address ? (
-                              <div
-                                className="text-[11px] text-charcoal-light leading-snug line-clamp-2 mt-0.5 whitespace-pre-line"
-                                title={ord.customer_address}
-                              >
-                                {ord.customer_address}
-                              </div>
-                            ) : ord.customer_city ? (
-                              <div className="text-[11px] text-charcoal-light mt-0.5">{ord.customer_city}</div>
-                            ) : (
-                              <div className="text-[10px] text-amber-700 italic mt-0.5">
-                                {tx('No address found', 'पत्ता उपलब्ध नाही')}
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-mono font-bold text-charcoal">
-                            {ord.customer_pincode ? ord.customer_pincode.replace(/\D/g, '').slice(-6) : '—'}
-                          </td>
-                          <td className="py-2.5 px-3">
-                            {ord.error ? (
-                              <span className="text-[11px] text-red-600 font-medium">{ord.error}</span>
-                            ) : ord.available_couriers && ord.available_couriers.length > 0 ? (
-                              <select
-                                value={ord.selected_courier?.courier_company_id || ''}
-                                onChange={(e) =>
-                                  handleSelectCourierForOrder(
-                                    ord.order_number,
-                                    Number(e.target.value)
-                                  )
-                                }
-                                className="border border-border-warm rounded-xl px-2.5 py-1.5 text-xs bg-white text-charcoal font-medium focus:outline-none focus:border-purple-600 focus:ring-1 focus:ring-purple-600/30 max-w-[220px]"
-                              >
-                                {ord.available_couriers.map((c: any) => (
-                                  <option key={c.courier_company_id} value={c.courier_company_id}>
-                                    {c.courier_name} — ₹{c.rate} ({c.etd})
-                                  </option>
-                                ))}
-                              </select>
-                            ) : (
-                              <span className="text-[11px] text-amber-700">No couriers serviceable</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-bold font-mono text-charcoal">
-                            {ord.selected_courier ? `₹${ord.selected_courier.rate}` : '—'}
-                          </td>
-                          <td className="py-2.5 px-3 text-[11px] text-charcoal-light">
-                            {ord.selected_courier?.etd || '—'}
-                          </td>
+              {/* Content State: Booking Success */}
+              {srSuccessData && !srCheckingRates && (
+                <div className="space-y-5">
+                  <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-4 flex items-start gap-3 text-emerald-950">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                    <div className="text-xs sm:text-sm space-y-1">
+                      <div className="font-bold">
+                        {tx(
+                          'Shipments Booked Successfully on Shiprocket! ✓',
+                          'शिपरोकेटवर शिपमेंट्स यशस्वीरित्या बुक झाल्या! ✓'
+                        )}
+                      </div>
+                      <div className="text-emerald-800">
+                        {tx(
+                          'AWB numbers are registered, shipping master is updated to Picked Up, and your clean 4-on-1 A4 labels have been prepared.',
+                          'AWB नंबर जोडले गेले आहेत, शिपिंग मास्टर अपडेट झाले आहे आणि ४-ऑन-१ A4 लेबल्स तयार झाली आहेत.'
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Booked Parcels List */}
+                  <div className="border border-border-warm rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm">
+                        <tr>
+                          <th className="py-2.5 px-3">Order #</th>
+                          <th className="py-2.5 px-3">Assigned Courier</th>
+                          <th className="py-2.5 px-3">AWB Tracking #</th>
+                          <th className="py-2.5 px-3">Status</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pickup Location & Summary Banner */}
-                <div className="flex items-center justify-between flex-wrap gap-2 text-xs text-charcoal-light px-1">
-                  <div>
-                    <span>{tx('Pickup Location:', 'पिकअप ठिकाण:')} </span>
-                    <strong className="text-charcoal">My Shop (Kamothe, 410209)</strong>
-                    <span className="ml-2 font-mono">· Mob: 9773915478</span>
+                      </thead>
+                      <tbody className="divide-y divide-border-warm">
+                        {srSuccessData.results.map((res: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-ivory/50">
+                            <td className="py-2 px-3 font-bold text-charcoal">#{res.order_number}</td>
+                            <td className="py-2 px-3 text-charcoal font-medium">{res.courier_name || '—'}</td>
+                            <td className="py-2 px-3 font-mono font-bold text-sky-700">
+                              {res.awb_code ? (
+                                <a
+                                  href={res.tracking_url || `https://shiprocket.co/tracking/${res.awb_code}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="hover:underline flex items-center gap-1"
+                                >
+                                  <span>{res.awb_code}</span>
+                                  <ExternalLink className="w-3 h-3 text-sky-600" />
+                                </a>
+                              ) : (
+                                <span className="text-red-600">{res.error || 'Failed'}</span>
+                              )}
+                            </td>
+                            <td className="py-2 px-3">
+                              {res.success ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                                  <Check className="w-3 h-3" /> Booked
+                                </span>
+                              ) : (
+                                <span className="text-[11px] font-bold text-red-600">Failed</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                  <div>
-                    <span>{tx('Total Orders to Book:', 'एकूण ऑर्डर्स:')} </span>
-                    <strong className="text-purple-900 font-bold font-mono">{srOrders.length}</strong>
-                    <span className="ml-3">{tx('Estimated Freight:', 'अंदाजे कुरिअर खर्च:')} </span>
-                    <strong className="text-emerald-800 font-bold font-mono text-sm">
-                      ₹
-                      {srOrders
-                        .reduce((sum, o) => sum + (o.selected_courier?.rate || 0), 0)
-                        .toFixed(2)}
-                    </strong>
-                  </div>
-                </div>
 
-                {/* Footer Controls */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-warm">
-                  <button
-                    type="button"
-                    onClick={() => setSrDispatchOpen(false)}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors cursor-pointer"
-                  >
-                    {tx('Cancel', 'रद्द करा')}
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={srBooking || srOrders.every((o) => !o.selected_courier)}
-                    onClick={handleConfirmShiprocketBooking}
-                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer disabled:opacity-40"
-                  >
-                    {srBooking ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-white" />
-                        <span>{tx('Booking Shipments & Generating AWBs…', 'बुक होत आहे…')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Rocket className="w-4 h-4 text-amber-300" />
-                        <span>
-                          {tx(
-                            `Confirm & Book ${srOrders.length} Shipments`,
-                            `${srOrders.length} शिपमेंट्स बुक करा`
-                          )}
-                        </span>
-                      </>
+                  {/* Primary Action Buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    {srSuccessData.cropped_pdf_base64 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadBase64Pdf(
+                            srSuccessData.cropped_pdf_base64!,
+                            `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
+                          )
+                        }
+                        className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-gold hover:bg-gold-light text-charcoal font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                      >
+                        <Scissors className="w-4 h-4 text-charcoal" />
+                        <span>{tx('Download 4-on-1 Clean Labels PDF (A4)', '४-ऑन-१ A4 लेबल्स पुन्हा डाऊनलोड करा')}</span>
+                      </button>
                     )}
-                  </button>
+
+                    <button
+                      type="button"
+                      disabled={manifestBusy}
+                      onClick={() =>
+                        handlePrintManifestForParcels(
+                          srSuccessData.results.map((r: any) => ({
+                            order_number: r.order_number,
+                            tracking_number: r.awb_code,
+                            courier_name: r.courier_name,
+                          }))
+                        )
+                      }
+                      className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {manifestBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                      <span>{tx('Print Pickup Manifest (2-in-1 A4 Sign Sheet)', 'डिलिव्हरी बॉयसाठी २-इन-१ मॅनिफेस्ट प्रिंट करा')}</span>
+                    </button>
+                  </div>
+
+                  <div className="flex justify-end pt-2 border-t border-border-warm">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSrDispatchOpen(false);
+                        setSrSuccessData(null);
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 transition-colors"
+                    >
+                      {tx('Done & Return to Shipping Master', 'पूर्ण झाले')}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+
+              {/* Content State: Interactive Selection Table */}
+              {!srCheckingRates && !srSuccessData && (
+                <div className="space-y-4">
+                  {/* Insufficient Balance Alert Banner */}
+                  {isBalanceInsufficient && (
+                    <div className="bg-red-50 border border-red-300 rounded-2xl p-4 flex items-start gap-3 text-red-950 animate-in fade-in duration-150">
+                      <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-1">
+                        <div className="text-xs sm:text-sm font-bold text-red-900 flex items-center gap-2 flex-wrap">
+                          <span>{tx('Insufficient Wallet Balance to Book All Shipments!', 'सर्व शिपमेंट्स बुक करण्यासाठी अपुरा वॉलेट बॅलन्स!')}</span>
+                          <span className="font-mono text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full border border-red-200">
+                            {tx('Short by:', 'कमी:')} ₹{(totalFreight - (srWalletBalance || 0)).toFixed(2)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-red-800 leading-relaxed">
+                          {tx(
+                            `Total estimated freight for these ${srOrders.length} orders is ₹${totalFreight.toFixed(2)}, but your current Shiprocket wallet has only ₹${srWalletBalance?.toFixed(2)}. Shiprocket requires sufficient prepaid balance to assign AWBs. Please recharge at least ₹${Math.ceil(totalFreight - (srWalletBalance || 0))} into your wallet before booking.`,
+                            `या ${srOrders.length} ऑर्डर्सचा एकूण कुरिअर खर्च ₹${totalFreight.toFixed(2)} आहे, पण तुमच्या शिपरोकेट वॉलेटमध्ये फक्त ₹${srWalletBalance?.toFixed(2)} शिल्लक आहेत. AWB तयार करण्यासाठी कृपया शिपरोकेट वॉलेटमध्ये किमान ₹${Math.ceil(totalFreight - (srWalletBalance || 0))} रिचार्ज करा.`
+                          )}
+                        </p>
+                      </div>
+                      <a
+                        href="https://app.shiprocket.in/recharge-wallet"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-xs flex-shrink-0 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <span>{tx('Recharge Now', 'आता रिचार्ज करा')}</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Batch Preferences Bar */}
+                  <div className="flex items-center justify-between flex-wrap gap-2 p-3 rounded-2xl bg-purple-50/60 border border-purple-200 text-xs">
+                    <div className="font-semibold text-purple-900 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                      <span>{tx('Quick Bulk Courier Selection:', 'जलद कुरिअर निवड:')}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleBulkSetCourierPreference('delhivery')}
+                        className="px-3 py-1.5 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
+                      >
+                        {tx('Prefer Delhivery Surface', 'सर्व्हिस: दिल्लीवरी प्राधान्य')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBulkSetCourierPreference('cheapest')}
+                        className="px-3 py-1.5 rounded-xl bg-white border border-purple-300 text-purple-900 font-bold hover:bg-purple-100 transition-colors cursor-pointer"
+                      >
+                        {tx('Pick Cheapest for All', 'सर्वात स्वस्त कुरिअर निवडा')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Orders Table */}
+                  <div className="border border-border-warm rounded-2xl overflow-hidden max-h-96 overflow-y-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm sticky top-0 z-10">
+                        <tr>
+                          <th className="py-2.5 px-3 w-16">Order #</th>
+                          <th className="py-2.5 px-3 min-w-[260px]">Customer & Delivery Address</th>
+                          <th className="py-2.5 px-3 w-20">Pincode</th>
+                          <th className="py-2.5 px-3 min-w-[270px]">Select Delivery Partner</th>
+                          <th className="py-2.5 px-3 w-24">Freight (₹)</th>
+                          <th className="py-2.5 px-3 w-24">Est. Delivery</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border-warm">
+                        {srOrders.map((ord: any) => (
+                          <tr key={ord.order_number} className="hover:bg-ivory/40">
+                            <td className="py-2.5 px-3 font-bold text-charcoal">#{ord.order_number}</td>
+                            <td className="py-2.5 px-3 min-w-[260px] max-w-[340px]">
+                              <div className="font-semibold text-charcoal flex items-center gap-1.5 flex-wrap">
+                                <span>{ord.customer_name}</span>
+                                {ord.customer_mobile && (
+                                  <span className="text-[10px] font-mono font-normal text-charcoal-light bg-black/5 px-1.5 py-0.2 rounded">
+                                    {ord.customer_mobile}
+                                  </span>
+                                )}
+                              </div>
+                              {ord.customer_address ? (
+                                <div
+                                  className="text-[11px] text-charcoal-light leading-snug line-clamp-2 mt-0.5 whitespace-pre-line"
+                                  title={ord.customer_address}
+                                >
+                                  {ord.customer_address}
+                                </div>
+                              ) : ord.customer_city ? (
+                                <div className="text-[11px] text-charcoal-light mt-0.5">{ord.customer_city}</div>
+                              ) : (
+                                <div className="text-[10px] text-amber-700 italic mt-0.5">
+                                  {tx('No address found', 'पत्ता उपलब्ध नाही')}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono font-bold text-charcoal">
+                              {ord.customer_pincode ? ord.customer_pincode.replace(/\D/g, '').slice(-6) : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 min-w-[270px]">
+                              {ord.error ? (
+                                <span className="text-[11px] text-red-600 font-medium">{ord.error}</span>
+                              ) : ord.available_couriers && ord.available_couriers.length > 0 ? (
+                                <select
+                                  value={ord.selected_courier?.courier_company_id || ''}
+                                  onChange={(e) =>
+                                    handleSelectCourierForOrder(
+                                      ord.order_number,
+                                      Number(e.target.value)
+                                    )
+                                  }
+                                  className="border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white text-charcoal font-medium focus:outline-none focus:border-purple-600 focus:ring-1 focus:ring-purple-600/30 w-full min-w-[260px]"
+                                >
+                                  {ord.available_couriers.map((c: any) => (
+                                    <option key={c.courier_company_id} value={c.courier_company_id}>
+                                      {c.courier_name} — ₹{c.rate} ({c.etd})
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="text-[11px] text-amber-700">No couriers serviceable</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 font-bold font-mono text-charcoal">
+                              {ord.selected_courier ? `₹${ord.selected_courier.rate}` : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-charcoal-light">
+                              {ord.selected_courier?.etd || '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pickup Location & Summary Banner */}
+                  <div className="flex items-center justify-between flex-wrap gap-3 text-xs text-charcoal-light px-1 pt-1">
+                    <div>
+                      <span>{tx('Pickup Location:', 'पिकअप ठिकाण:')} </span>
+                      <strong className="text-charcoal">My Shop (Kamothe, 410209)</strong>
+                      <span className="ml-2 font-mono">· Mob: 9773915478</span>
+                    </div>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div>
+                        <span>{tx('Total Orders to Book:', 'एकूण ऑर्डर्स:')} </span>
+                        <strong className="text-purple-900 font-bold font-mono">{srOrders.length}</strong>
+                      </div>
+                      <div>
+                        <span>{tx('Estimated Freight:', 'अंदाजे कुरिअर खर्च:')} </span>
+                        <strong className="text-emerald-800 font-bold font-mono text-sm">
+                          ₹{totalFreight.toFixed(2)}
+                        </strong>
+                      </div>
+                      {srWalletBalance !== null && (
+                        <div>
+                          <span>{tx('Wallet Balance:', 'वॉलेट शिल्लक:')} </span>
+                          <strong className={`font-mono text-sm font-bold ${isBalanceInsufficient ? 'text-red-600' : 'text-emerald-700'}`}>
+                            ₹{srWalletBalance.toFixed(2)}
+                          </strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Footer Controls */}
+                  <div className="flex items-center justify-end gap-3 pt-3 border-t border-border-warm">
+                    <button
+                      type="button"
+                      onClick={() => setSrDispatchOpen(false)}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors cursor-pointer"
+                    >
+                      {tx('Cancel', 'रद्द करा')}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={srBooking || isBalanceInsufficient || srOrders.every((o) => !o.selected_courier)}
+                      onClick={handleConfirmShiprocketBooking}
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm font-bold transition-all shadow-md cursor-pointer disabled:opacity-40"
+                      title={isBalanceInsufficient ? tx('Please recharge your Shiprocket wallet before booking', 'कृपया आधी शिपरोकेट वॉलेट रिचार्ज करा') : ''}
+                    >
+                      {srBooking ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          <span>{tx('Booking Shipments & Generating AWBs…', 'बुक होत आहे…')}</span>
+                        </>
+                      ) : isBalanceInsufficient ? (
+                        <>
+                          <AlertTriangle className="w-4 h-4 text-amber-300" />
+                          <span>
+                            {tx(
+                              `Recharge Required (Short by ₹${(totalFreight - (srWalletBalance || 0)).toFixed(2)})`,
+                              `रिचार्ज आवश्यक (कमी: ₹${(totalFreight - (srWalletBalance || 0)).toFixed(2)})`
+                            )}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Rocket className="w-4 h-4 text-amber-300" />
+                          <span>
+                            {tx(
+                              `Confirm & Book ${srOrders.length} Shipments`,
+                              `${srOrders.length} शिपमेंट्स बुक करा`
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Full Size Photo Viewer Modal */}
       {viewingPhotoUrl && (

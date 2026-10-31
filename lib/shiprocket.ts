@@ -27,8 +27,8 @@ export interface ServiceabilityResult {
 }
 
 export async function getShiprocketToken(): Promise<string> {
-  const email = process.env.SHIPROCKET_EMAIL;
-  const password = process.env.SHIPROCKET_PASSWORD;
+  const email = process.env.SHIPROCKET_EMAIL || 'kp7778g@gmail.com';
+  const password = process.env.SHIPROCKET_PASSWORD || 'bhZt@uE3WC&Tz#uCEApRHM&SS&P92fPA';
 
   if (!email || !password) {
     throw new Error('SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD must be configured in environment variables.');
@@ -206,10 +206,10 @@ export async function createShiprocketOrder(payload: AdhocOrderPayload) {
     comment: 'Order from Shubhangi Collection Directory',
     billing_customer_name: firstName,
     billing_last_name: lastName,
-    billing_address: payload.customer_address.slice(0, 190),
+    billing_address: (payload.customer_address || payload.customer_city || 'Delivery Address').slice(0, 190),
     billing_address_2: '',
-    billing_city: payload.customer_city || 'City',
-    billing_pincode: payload.customer_pincode.replace(/\D/g, '').trim(),
+    billing_city: payload.customer_city || 'Maharashtra',
+    billing_pincode: payload.customer_pincode.replace(/\D/g, '').slice(-6),
     billing_state: payload.customer_state || 'Maharashtra',
     billing_country: 'India',
     billing_email: 'support@shubhangicollection.in',

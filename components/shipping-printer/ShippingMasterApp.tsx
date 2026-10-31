@@ -532,18 +532,21 @@ export default function ShippingMasterApp() {
     setSrCheckingRates(true);
     setSrSuccessData(null);
 
-    const initialOrders = selectedEntries.map((e) => ({
-      order_number: e.order_number,
-      customer_name: e.customer_name || 'Customer',
-      customer_mobile: e.customer_mobile || '',
-      customer_address: e.customer_address || '',
-      customer_city: e.customer_city || '',
-      customer_pincode: e.customer_pincode || '',
-      weight_kg: 0.2,
-      available_couriers: [] as any[],
-      selected_courier: null as any,
-      error: '',
-    }));
+    const initialOrders = selectedEntries.map((e) => {
+      const cleanPin = (e.customer_pincode || '').replace(/\D/g, '').slice(-6);
+      return {
+        order_number: e.order_number,
+        customer_name: e.customer_name || 'Customer',
+        customer_mobile: e.customer_mobile || '',
+        customer_address: e.customer_address || '',
+        customer_city: e.customer_city || '',
+        customer_pincode: cleanPin || e.customer_pincode || '',
+        weight_kg: 0.2,
+        available_couriers: [] as any[],
+        selected_courier: null as any,
+        error: '',
+      };
+    });
     setSrOrders(initialOrders);
 
     try {
@@ -3178,7 +3181,7 @@ export default function ShippingMasterApp() {
                     <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm sticky top-0 z-10">
                       <tr>
                         <th className="py-2.5 px-3">Order #</th>
-                        <th className="py-2.5 px-3">Customer & Area</th>
+                        <th className="py-2.5 px-3">Customer & Delivery Address</th>
                         <th className="py-2.5 px-3">Pincode</th>
                         <th className="py-2.5 px-3">Select Delivery Partner</th>
                         <th className="py-2.5 px-3">Freight (₹)</th>
@@ -3189,12 +3192,32 @@ export default function ShippingMasterApp() {
                       {srOrders.map((ord: any) => (
                         <tr key={ord.order_number} className="hover:bg-ivory/40">
                           <td className="py-2.5 px-3 font-bold text-charcoal">#{ord.order_number}</td>
-                          <td className="py-2.5 px-3">
-                            <div className="font-semibold text-charcoal">{ord.customer_name}</div>
-                            <div className="text-[11px] text-charcoal-light">{ord.customer_city || '—'}</div>
+                          <td className="py-2.5 px-3 max-w-[280px]">
+                            <div className="font-semibold text-charcoal flex items-center gap-1.5 flex-wrap">
+                              <span>{ord.customer_name}</span>
+                              {ord.customer_mobile && (
+                                <span className="text-[10px] font-mono font-normal text-charcoal-light bg-black/5 px-1.5 py-0.2 rounded">
+                                  {ord.customer_mobile}
+                                </span>
+                              )}
+                            </div>
+                            {ord.customer_address ? (
+                              <div
+                                className="text-[11px] text-charcoal-light leading-snug line-clamp-2 mt-0.5 whitespace-pre-line"
+                                title={ord.customer_address}
+                              >
+                                {ord.customer_address}
+                              </div>
+                            ) : ord.customer_city ? (
+                              <div className="text-[11px] text-charcoal-light mt-0.5">{ord.customer_city}</div>
+                            ) : (
+                              <div className="text-[10px] text-amber-700 italic mt-0.5">
+                                {tx('No address found', 'पत्ता उपलब्ध नाही')}
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 font-mono font-bold text-charcoal">
-                            {ord.customer_pincode || '—'}
+                            {ord.customer_pincode ? ord.customer_pincode.replace(/\D/g, '').slice(-6) : '—'}
                           </td>
                           <td className="py-2.5 px-3">
                             {ord.error ? (

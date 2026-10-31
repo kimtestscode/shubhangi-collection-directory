@@ -71,7 +71,8 @@ export function getPickupLocationName(): string {
 export async function checkCourierServiceability(
   deliveryPincode: string,
   weightKg = 0.2,
-  cod = 0
+  cod = 0,
+  dims = { length: 18, breadth: 12, height: 4 }
 ): Promise<ServiceabilityResult> {
   try {
     const token = await getShiprocketToken();
@@ -89,7 +90,7 @@ export async function checkCourierServiceability(
       };
     }
 
-    const url = `https://apiv2.shiprocket.in/v1/external/courier/serviceability/?pickup_postcode=${pickupPincode}&delivery_postcode=${cleanPin}&weight=${weightKg}&cod=${cod}`;
+    const url = `https://apiv2.shiprocket.in/v1/external/courier/serviceability/?pickup_postcode=${pickupPincode}&delivery_postcode=${cleanPin}&weight=${weightKg}&cod=${cod}&length=${dims.length}&breadth=${dims.breadth}&height=${dims.height}`;
 
     const res = await fetch(url, {
       method: 'GET',

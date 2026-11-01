@@ -12,6 +12,36 @@ export async function POST(req: NextRequest) {
   const action = body.action; // 'update_dates' | 'delete_entries' | 'clear_addresses'
   const supabase = createAdminClient();
 
+  // ─── 0. BULK MARK OUT FOR DELIVERY / HANDED TO COURIER ───────────────────
+  if (action === 'mark_out_for_delivery') {
+    const ids: string[] = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];
+    if (ids.length === 0) {
+      return NextResponse.json({ error: 'No order IDs specified' }, { status: 400 });
+    }
+
+    const shippedAt = typeof body.shipped_at === 'string' && body.shipped_at.trim()
+      ? new Date(body.shipped_at).toISOString()
+      : new Date().toISOString();
+    const handedTo = typeof body.handed_to === 'string' && body.handed_to.trim()
+      ? body.handed_to.trim()
+      : null;
+
+    const updatePayload: Record<string, any> = {
+      status: 'out_for_delivery',
+      shipped_at: shippedAt,
+    };
+    if (handedTo) updatePayload.handed_to = handedTo;
+
+    const { data, error } = await supabase
+      .from('shipping_master')
+      .update(updatePayload)
+      .in('id', ids)
+      .select();
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, count: data?.length || 0, updated: data });
+  }
+
   // ─── 1. BULK UPDATE DATES ────────────────────────────────────────────────
   if (action === 'update_dates') {
     const ids: string[] = Array.isArray(body.ids) ? body.ids.filter(Boolean) : [];

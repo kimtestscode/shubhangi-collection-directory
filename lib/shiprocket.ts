@@ -330,3 +330,64 @@ export async function generateShiprocketLabel(shipmentIds: number[]) {
 
   return json.label_url as string;
 }
+
+export interface ShiprocketTrackingResult {
+  awb_code: string;
+  current_status: string;
+  delivered_date?: string;
+  expected_date?: string;
+  activity?: string;
+  location?: string;
+  scans?: Array<{ date: string; status: string; activity: string; location: string }>;
+  error?: string;
+}
+
+/**
+ * Fetch real-time live tracking data for an AWB code from Shiprocket.
+ */
+export async function trackShiprocketAWB(awbCode: string): Promise<ShiprocketTrackingResult | null> {
+  try {
+    const token = await getShiprocketToken();
+    const cleanAwb = encodeURIComponent(awbCode.trim());
+    const res = await fetch(`https://apiv2.shiprocket.in/v1/external/courier/track/awb/${cleanAwb}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!res.ok) return null;
+    const json = await res.json();
+    const trackData = json.tracking_data;
+    if (!trackData || !trackData.shipment_track || trackData.shipment_track.length === 0) {
+      return null;
+    }
+
+    const track = trackData.shipment_track[0];
+    const rawScans = Array.isArray(trackData.shipment_track_activities)
+      ? trackData.shipment_track_activities
+      : track.scans || [];
+
+    const scans = rawScans.map((s: any) => ({
+      date: s.date || '',
+      status: s.status || s['sr-status-label'] || '',
+      activity: s.activity || '',
+      location: s.location || '',
+    }));
+
+    const latestScan = scans[0] || null;
+
+    return {
+      awb_code: String(track.awb_code || awbCode),
+      current_status: String(track.current_status || '').toUpperCase(),
+      delivered_date: track.delivered_date || undefined,
+      expected_date: track.expected_date || undefined,
+      activity: latestScan?.activity || track.current_status || '',
+      location: latestScan?.location || '',
+      scans,
+    };
+  } catch (err) {
+    console.error(`Error tracking Shiprocket AWB ${awbCode}:`, err);
+    return null;
+  }
+}

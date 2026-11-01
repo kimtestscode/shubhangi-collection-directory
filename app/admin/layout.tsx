@@ -44,11 +44,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           const data = await res.json();
           if (mounted && data.user) {
             setCurrentUser(data.user);
-            // If user is a courier delivery partner, redirect directly to mobile /courier portal
-            if (data.user.role === 'courier_partner' && !pathname.startsWith('/courier')) {
-              router.push('/courier');
-              return;
-            }
           }
         }
       } catch {

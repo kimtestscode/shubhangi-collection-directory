@@ -487,7 +487,7 @@ export function hasPageAccess(user: { role: string; permissions?: UserPermission
 export function getDefaultRedirect(role: string): string {
   switch (role) {
     case 'courier_partner':
-      return '/courier';
+      return '/admin/shipping-master';
     case 'staff':
       return '/admin/shipping-master';
     case 'support':

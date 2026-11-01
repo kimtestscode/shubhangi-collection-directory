@@ -13,7 +13,8 @@ import { useLanguage } from '@/lib/languageContext';
 import {
   ShippingEntry, ShippingStatus, CourierPartner, COURIER_META,
   formatShippedAt, istDateKey, getTimeElapsed, getWhatsAppUrl,
-  cleanMobileNumber, buildWhatsAppTrackingMessage
+  cleanMobileNumber, buildWhatsAppTrackingMessage,
+  resolveCourierMeta, getShippingStatusMeta
 } from '@/lib/shipping';
 import { Order } from '@/lib/address-printer/order';
 import ShippingPrintPreview from './ShippingPrintPreview';
@@ -90,8 +91,18 @@ export default function ShippingMasterApp() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
 
-  // Status Filter Tabs: 'all' | 'pending' | 'picked_up' | 'dispatched'
-  const [statusTab, setStatusTab] = useState<'all' | ShippingStatus>('all');
+  // Status Filter Tabs: 'all' | 'pending' | 'out_for_delivery' | 'delivered' | 'rto'
+  const [statusTab, setStatusTab] = useState<'all' | 'pending' | 'out_for_delivery' | 'delivered' | 'rto'>('all');
+
+  // Live Shiprocket Tracking Sync State
+  const [srSyncing, setSrSyncing] = useState(false);
+
+  // Handover Accountability State (When handing parcels to courier person)
+  const [handoverModalOpen, setHandoverModalOpen] = useState(false);
+  const [handoverTargetIds, setHandoverTargetIds] = useState<string[]>([]);
+  const [handoverPerson, setHandoverPerson] = useState('');
+  const [handoverTime, setHandoverTime] = useState('');
+  const [handoverBusy, setHandoverBusy] = useState(false);
 
   const [manualCode, setManualCode] = useState('');
   const [handedTo, setHandedTo] = useState('');
@@ -669,6 +680,88 @@ export default function ShippingMasterApp() {
     }
   }
 
+  // ─── Shiprocket Live Tracking Sync ─────────────────────────────────────────
+  async function handleSyncShiprocketTracking() {
+    setSrSyncing(true);
+    try {
+      const res = await fetch('/api/shipping/shiprocket/sync-tracking', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Sync failed');
+
+      await loadEntries();
+      beep(880, 100);
+      setFeedback({
+        kind: 'success',
+        order: `${data.checked} parcels checked`,
+        note: tx(
+          `Shiprocket Sync Complete: ${data.checked} parcels checked, ${data.updated} status/milestone updates recorded.`,
+          `शिपरॉकेट सिंक पूर्ण: ${data.checked} पार्सल तपासले, ${data.updated} नवीन स्टेटस अपडेट झाले.`
+        ),
+      });
+    } catch (err: any) {
+      beep(220, 200);
+      alert(err.message || 'Error syncing Shiprocket tracking');
+    } finally {
+      setSrSyncing(false);
+    }
+  }
+
+  // ─── Handover Accountability Handlers ─────────────────────────────────────
+  function openHandoverModal(ids: string[]) {
+    if (ids.length === 0) return;
+    setHandoverTargetIds(ids);
+    setHandoverPerson(handedTo || 'Delhivery Pickup Agent');
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const localIso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    setHandoverTime(localIso);
+    setHandoverModalOpen(true);
+  }
+
+  async function handleConfirmHandover() {
+    if (handoverTargetIds.length === 0) return;
+    setHandoverBusy(true);
+    try {
+      const shippedIso = handoverTime ? new Date(handoverTime).toISOString() : new Date().toISOString();
+      const person = handoverPerson.trim() || 'Courier Pickup Agent';
+      const res = await fetch('/api/shipping/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'mark_out_for_delivery',
+          ids: handoverTargetIds,
+          shipped_at: shippedIso,
+          handed_to: person,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update handover status');
+
+      await loadEntries();
+      setHandoverModalOpen(false);
+      setSelectedIds([]);
+      beep(880, 100);
+      setFeedback({
+        kind: 'success',
+        order: `${data.count} parcels`,
+        at: shippedIso,
+        note: tx(
+          `Accountability Logged: ${data.count} parcel(s) marked Out for Delivery / Handed to "${person}" at ${formatShippedAt(shippedIso)} ✓`,
+          `जबाबदारी नोंद: ${data.count} पार्सल "${person}" कडे दिल्याची नोंद झाली (${formatShippedAt(shippedIso)}) ✓`
+        ),
+      });
+    } catch (err: any) {
+      beep(220, 200);
+      alert(err.message || 'Failed to mark out for delivery');
+    } finally {
+      setHandoverBusy(false);
+    }
+  }
+
   function downloadBase64Pdf(base64: string, filename: string) {
     const byteCharacters = atob(base64);
     const byteNumbers = new Array(byteCharacters.length);
@@ -1046,25 +1139,29 @@ export default function ShippingMasterApp() {
 
   const counts = useMemo(() => {
     let pending = 0;
-    let pickedUp = 0;
-    let dispatched = 0;
+    let outForDelivery = 0;
+    let delivered = 0;
+    let rto = 0;
     let delayed = 0;
     let totalShippingCost = 0;
 
     for (const e of entries) {
       if (e.shipping_cost) totalShippingCost += Number(e.shipping_cost);
-      const st = e.status || (e.shipped_at ? 'picked_up' : 'pending');
+      const st = String(e.status || (e.shipped_at ? 'out_for_delivery' : 'pending')).toLowerCase();
       if (st === 'pending') {
         pending++;
         const elapsed = getTimeElapsed(e.printed_at || e.created_at);
         if (elapsed.hours >= 24) delayed++;
-      } else if (st === 'picked_up') {
-        pickedUp++;
-      } else if (st === 'dispatched') {
-        dispatched++;
+      } else if (st === 'delivered') {
+        delivered++;
+      } else if (st === 'rto' || st === 'undelivered') {
+        rto++;
+      } else {
+        // Includes 'out_for_delivery', 'picked_up', 'dispatched', 'in_transit'
+        outForDelivery++;
       }
     }
-    return { all: entries.length, pending, pickedUp, dispatched, delayed, totalShippingCost };
+    return { all: entries.length, pending, outForDelivery, delivered, rto, delayed, totalShippingCost };
   }, [entries]);
 
   // ─── Print Bundles & Batches Clustering ───────────────────────────────────
@@ -1225,11 +1322,19 @@ export default function ShippingMasterApp() {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
       // Status tab filter
-      const effectiveStatus: ShippingStatus = e.status || (e.shipped_at ? 'picked_up' : 'pending');
-      if (statusTab !== 'all' && effectiveStatus !== statusTab) return false;
+      const effectiveStatus = String(e.status || (e.shipped_at ? 'out_for_delivery' : 'pending')).toLowerCase();
+      if (statusTab !== 'all') {
+        if (statusTab === 'pending' && effectiveStatus !== 'pending') return false;
+        if (statusTab === 'out_for_delivery' && !['out_for_delivery', 'picked_up', 'dispatched', 'in_transit'].includes(effectiveStatus)) return false;
+        if (statusTab === 'delivered' && effectiveStatus !== 'delivered') return false;
+        if (statusTab === 'rto' && effectiveStatus !== 'rto' && effectiveStatus !== 'undelivered') return false;
+      }
 
       // Courier filter
-      if (filterCourier !== 'all' && e.courier_partner !== filterCourier) return false;
+      if (filterCourier !== 'all') {
+        const meta = resolveCourierMeta(e.courier_partner, e.notes);
+        if (meta.id !== filterCourier && e.courier_partner !== filterCourier) return false;
+      }
 
       // Date filter
       const dateTarget = e.shipped_at || e.printed_at || e.created_at;
@@ -1241,14 +1346,15 @@ export default function ShippingMasterApp() {
         if (bundle && !bundle.orderIds.includes(e.id)) return false;
       }
 
-      // Search query across order number, customer name, mobile, docket
+      // Search query across order number, customer name, mobile, docket, handed_to, notes
       if (!q) return true;
       return (
         e.order_number.toLowerCase().includes(q) ||
         (e.customer_name ?? '').toLowerCase().includes(q) ||
         (e.customer_mobile ?? '').includes(q) ||
         (e.tracking_number ?? '').toLowerCase().includes(q) ||
-        (e.handed_to ?? '').toLowerCase().includes(q)
+        (e.handed_to ?? '').toLowerCase().includes(q) ||
+        (e.notes ?? '').toLowerCase().includes(q)
       );
     });
   }, [entries, statusTab, filterCourier, filterDate, search, selectedBundleId, bundles]);
@@ -1275,7 +1381,11 @@ export default function ShippingMasterApp() {
     ];
 
     for (const e of visible) {
-      const courierName = e.courier_partner ? COURIER_META[e.courier_partner]?.name : '';
+      let courierName = resolveCourierMeta(e.courier_partner, e.notes).name;
+      if (e.notes && e.notes.includes('Shiprocket:')) {
+        const extracted = e.notes.replace(/.*Shiprocket:\s*/i, '').split('|')[0].trim();
+        if (extracted) courierName = extracted;
+      }
       rows.push([
         e.order_number,
         e.status || 'pending',
@@ -1335,8 +1445,8 @@ export default function ShippingMasterApp() {
           </h1>
           <p className="text-sm text-ivory/80 max-w-2xl leading-relaxed">
             {tx(
-              'Track parcels from packing to courier pickup and hub dispatch. Assign Shree Maruti, Anjani, or India Post tracking IDs and send 1-click tracking links directly to customer WhatsApp.',
-              'पॅकिंगपासून कुरिअर पिकअप आणि डिस्पॅचपर्यंत सर्व ट्रॅक करा. श्री मारुती, अंजनी किंवा भारतीय डाक ट्रॅकिंग नंबर जोडून ग्राहकांना 1-क्लिकमध्ये WhatsApp वर ट्रॅकिंग लिंक पाठवा.'
+              'Automated Shiprocket dispatch, 2-in-1 pickup manifests, and live milestone delivery tracking. Record courier handovers with exact timestamps for complete staff accountability.',
+              'शिपरॉकेट ऑटोमेटेड डिस्पॅच, २-इन-१ पिकअप मॅनिफेस्ट आणि लाईव्ह डिलिव्हरी ट्रॅकिंग. पार्सल कुरिअरकडे दिल्याची अचूक वेळ नोंदवून पूर्ण जबाबदारी ठेवा.'
             )}
           </p>
         </div>
@@ -1365,22 +1475,23 @@ export default function ShippingMasterApp() {
               <span>{tx('Crop Shiprocket Labels (A4)', 'शिपरोकेट लेबल्स क्रॉप करा (A4)')}</span>
             </button>
 
-            <Link
-              href="/courier"
-              target="_blank"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-ivory text-xs font-semibold border border-white/20 transition-colors shadow-2xs"
+            <button
+              type="button"
+              disabled={srSyncing}
+              onClick={handleSyncShiprocketTracking}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+              title={tx('Sync real-time delivery and transit milestones from Shiprocket', 'शिपरॉकेटवरून लाईव्ह ट्रॅकिंग आणि डिलिव्हरी स्टेटस रिफ्रेश करा')}
             >
-              <Truck className="w-3.5 h-3.5 text-gold" />
-              <span>{tx('Open Courier Partner Portal (/courier)', 'डिलिव्हरी पार्टनर पोर्टल उघडा (/courier)')}</span>
-              <ExternalLink className="w-3 h-3 text-gold" />
-            </Link>
+              <RefreshCw className={`w-3.5 h-3.5 ${srSyncing ? 'animate-spin' : ''}`} />
+              <span>{srSyncing ? tx('Syncing...', 'सिंक होत आहे...') : tx('Sync Live Tracking', 'सिंक ट्रॅकिंग')}</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-2.5">
             <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
               <div className="text-lg font-bold text-amber-300 leading-none">{counts.pending}</div>
               <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-                {tx('Pending', 'पिकअप बाकी')}
+                {tx('Pending Handover', 'पिकअप बाकी')}
               </div>
               {counts.delayed > 0 && (
                 <span className="inline-block mt-0.5 text-[8px] px-1 py-0.2 rounded bg-red-500/30 text-red-200 border border-red-400/40 font-semibold">
@@ -1390,16 +1501,16 @@ export default function ShippingMasterApp() {
             </div>
 
             <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
-              <div className="text-lg font-bold text-sky-300 leading-none">{counts.pickedUp}</div>
+              <div className="text-lg font-bold text-indigo-300 leading-none">{counts.outForDelivery}</div>
               <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-                {tx('Picked Up', 'पिकअप झाले')}
+                {tx('Out for Delivery', 'कुरिअरकडे दिले')}
               </div>
             </div>
 
             <div className="bg-white/10 backdrop-blur-xs rounded-2xl p-2.5 text-center border border-white/10 min-w-[85px]">
-              <div className="text-lg font-bold text-emerald-400 leading-none">{counts.dispatched}</div>
+              <div className="text-lg font-bold text-emerald-400 leading-none">{counts.delivered}</div>
               <div className="text-[10px] uppercase tracking-wider text-ivory/70 mt-1">
-                {tx('Dispatched', 'डिस्पॅच पूर्ण')}
+                {tx('Delivered', 'डिलिव्हर झाले')}
               </div>
             </div>
 
@@ -1729,7 +1840,7 @@ export default function ShippingMasterApp() {
               }`}
             >
               <Clock className="w-3.5 h-3.5" />
-              <span>{tx('🟡 Pending Pickup', '🟡 पिकअप बाकी')}</span>
+              <span>{tx('🟡 Pending Handover', '🟡 पिकअप बाकी')}</span>
               <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-black/10 text-inherit font-bold">
                 {counts.pending}
               </span>
@@ -1741,34 +1852,51 @@ export default function ShippingMasterApp() {
             </button>
 
             <button
-              onClick={() => setStatusTab('picked_up')}
+              onClick={() => setStatusTab('out_for_delivery')}
               className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 ${
-                statusTab === 'picked_up'
-                  ? 'bg-sky-600 text-white shadow-xs'
+                statusTab === 'out_for_delivery'
+                  ? 'bg-indigo-600 text-white shadow-xs'
                   : 'bg-white text-charcoal-light hover:text-charcoal border border-border-warm'
               }`}
             >
               <Truck className="w-3.5 h-3.5" />
-              <span>{tx('🔵 Picked Up (At Hub)', '🔵 पिकअप झाले')}</span>
+              <span>{tx('🚚 Out for Delivery / Shipped', '🚚 कुरिअरकडे दिले / डिस्पॅच')}</span>
               <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-black/10 text-inherit font-bold">
-                {counts.pickedUp}
+                {counts.outForDelivery}
               </span>
             </button>
 
             <button
-              onClick={() => setStatusTab('dispatched')}
+              onClick={() => setStatusTab('delivered')}
               className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 ${
-                statusTab === 'dispatched'
+                statusTab === 'delivered'
                   ? 'bg-emerald-600 text-white shadow-xs'
                   : 'bg-white text-charcoal-light hover:text-charcoal border border-border-warm'
               }`}
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>{tx('🟢 Dispatched (Tracking Added)', '🟢 डिस्पॅच पूर्ण')}</span>
+              <span>{tx('✅ Delivered', '✅ डिलिव्हर झाले')}</span>
               <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-black/10 text-inherit font-bold">
-                {counts.dispatched}
+                {counts.delivered}
               </span>
             </button>
+
+            {counts.rto > 0 && (
+              <button
+                onClick={() => setStatusTab('rto')}
+                className={`px-3 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-colors flex items-center gap-1.5 ${
+                  statusTab === 'rto'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-white text-charcoal-light hover:text-charcoal border border-border-warm'
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>{tx('⚠️ RTO / Undelivered', '⚠️ रिटर्न आले')}</span>
+                <span className="text-[11px] px-1.5 py-0.2 rounded-full bg-black/10 text-inherit font-bold">
+                  {counts.rto}
+                </span>
+              </button>
+            )}
           </div>
 
           <button
@@ -1798,13 +1926,15 @@ export default function ShippingMasterApp() {
             <select
               value={filterCourier}
               onChange={(e) => setFilterCourier(e.target.value)}
-              className="text-xs sm:text-sm border border-border-warm rounded-xl px-3 py-2 bg-white text-charcoal focus:outline-none focus:border-gold"
+              className="text-xs sm:text-sm border border-border-warm rounded-xl px-3 py-2 bg-white text-charcoal focus:outline-none focus:border-gold font-medium"
             >
               <option value="all">{tx('All Couriers', 'सर्व कुरिअर्स')}</option>
-              <option value="shree_maruti">Shree Maruti Courier</option>
-              <option value="anjani">Anjani Courier</option>
-              <option value="india_post">India Post</option>
-              <option value="other">{tx('Other Courier', 'इतर कुरिअर')}</option>
+              <option value="delhivery">Delhivery Surface / Air</option>
+              <option value="bluedart">Blue Dart Air / Surface</option>
+              <option value="dtdc">DTDC Express</option>
+              <option value="india_post">India Post (स्पीड पोस्ट)</option>
+              <option value="xpressbees">Xpressbees</option>
+              <option value="other">{tx('Other / Shiprocket', 'इतर / शिपरॉकेट')}</option>
             </select>
 
             {/* Date filter */}
@@ -1952,6 +2082,17 @@ export default function ShippingMasterApp() {
 
               <button
                 type="button"
+                disabled={bulkBusy}
+                onClick={() => openHandoverModal(selectedIds)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                title={tx('Mark selected parcels as Handed to Courier / Out for Delivery with exact timestamp', 'निवडलेली पार्सल्स कुरिअरकडे दिल्याचा अचूक दिनांक व वेळ नोंदवा')}
+              >
+                <Truck className="w-3.5 h-3.5 text-indigo-200" />
+                <span>{tx('Mark Out for Delivery', 'कुरिअरकडे दिले')}</span>
+              </button>
+
+              <button
+                type="button"
                 disabled={manifestBusy}
                 onClick={handlePrintManifestForSelected}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
@@ -2038,8 +2179,9 @@ export default function ShippingMasterApp() {
               </thead>
               <tbody className="divide-y divide-border-warm/80">
                 {visible.map((e) => {
-                  const effectiveStatus = e.status || (e.shipped_at ? 'picked_up' : 'pending');
-                  const courierMeta = e.courier_partner ? COURIER_META[e.courier_partner] : null;
+                  const effectiveStatus = String(e.status || (e.shipped_at ? 'out_for_delivery' : 'pending')).toLowerCase();
+                  const courierMeta = resolveCourierMeta(e.courier_partner, e.notes);
+                  const statusMeta = getShippingStatusMeta(effectiveStatus);
                   const elapsedPrinted = getTimeElapsed(e.printed_at || e.created_at);
                   const isDelayed = effectiveStatus === 'pending' && elapsedPrinted.hours >= 24;
 
@@ -2154,124 +2296,157 @@ export default function ShippingMasterApp() {
                       </td>
 
                       {/* Status & Timing */}
-                      <td className="px-4 py-3 align-top">
-                        {effectiveStatus === 'pending' && (
-                          <div className="space-y-1">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                                isDelayed
-                                    ? 'bg-red-100 text-red-800 border-red-300'
-                                    : 'bg-amber-50 text-amber-800 border-amber-200'
-                              }`}
-                            >
-                              <Clock className="w-3 h-3" />
-                              {isDelayed
-                                ? tx(`Delayed (${elapsedPrinted.text})`, `उशीर (${elapsedPrinted.text})`)
-                                : tx('Pending Pickup', 'पिकअप बाकी')}
-                            </span>
-                            <div className="text-[10px] text-charcoal-light">
-                              {tx('Awaiting courier pickup', 'कुरिअर पिकअपची प्रतीक्षा')}
-                            </div>
-                          </div>
-                        )}
-
-                        {effectiveStatus === 'picked_up' && (
-                          <div className="space-y-1">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-800 border border-sky-200">
+                      <td className="px-4 py-3 align-top min-w-[170px]">
+                        <div className="space-y-1">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                              isDelayed
+                                ? 'bg-red-100 text-red-800 border-red-300'
+                                : `${statusMeta.bg} ${statusMeta.text} ${statusMeta.border}`
+                            }`}
+                          >
+                            {effectiveStatus === 'delivered' ? (
+                              <CheckCircle2 className="w-3 h-3" />
+                            ) : effectiveStatus === 'out_for_delivery' ? (
                               <Truck className="w-3 h-3" />
-                              {tx('Picked Up (Hub)', 'पिकअप झाले')}
-                            </span>
-                            <div className="text-[10px] text-charcoal-light">
+                            ) : effectiveStatus === 'pending' ? (
+                              <Clock className="w-3 h-3" />
+                            ) : (
+                              <Truck className="w-3 h-3" />
+                            )}
+                            {isDelayed
+                              ? tx(`Delayed (${elapsedPrinted.text})`, `उशीर (${elapsedPrinted.text})`)
+                              : (isMr ? statusMeta.labelMr : statusMeta.labelEn)}
+                          </span>
+
+                          {/* Shipped / Handover timestamp */}
+                          {e.shipped_at && (
+                            <div className="text-[11px] text-charcoal font-medium">
+                              <span className="text-charcoal-light font-normal">{tx('Shipped:', 'डिस्पॅच:')}</span>{' '}
                               {formatShippedAt(e.shipped_at)}
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {effectiveStatus === 'dispatched' && (
-                          <div className="space-y-1">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                              <CheckCircle2 className="w-3 h-3" />
-                              {tx('Dispatched', 'डिस्पॅच पूर्ण')}
-                            </span>
+                          {/* Handed to Carrier person */}
+                          {e.handed_to && (
                             <div className="text-[10px] text-charcoal-light">
-                              {formatShippedAt(e.shipped_at || e.created_at)}
+                              {tx('To:', 'कडे:')}{' '}
+                              <span className="font-semibold text-charcoal">{e.handed_to}</span>
                             </div>
-                          </div>
-                        )}
+                          )}
+
+                          {/* Latest tracking location scan if available */}
+                          {e.notes && e.notes.includes('|') && (
+                            <div
+                              className="text-[10px] text-blue-700 font-medium truncate max-w-[190px]"
+                              title={e.notes.split('|')[1]?.trim()}
+                            >
+                              📍 {e.notes.split('|')[1]?.trim()}
+                            </div>
+                          )}
+
+                          {/* Quick 1-click Hand to Courier action for pending orders */}
+                          {effectiveStatus === 'pending' && (
+                            <div className="pt-1">
+                              <button
+                                type="button"
+                                onClick={() => openHandoverModal([e.id])}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition-colors cursor-pointer shadow-2xs"
+                                title={tx('Record exact handover time to courier person', 'कुरिअरकडे दिल्याची वेळ नोंदवा')}
+                              >
+                                <Truck className="w-3 h-3 text-indigo-600" />
+                                <span>{tx('Hand to Courier', 'कुरिअरकडे द्या')}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Courier & Docket info */}
                       <td className="px-4 py-3 align-top min-w-[210px]">
-                        {e.courier_partner ? (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-1.5">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${courierMeta?.badgeBg} ${courierMeta?.badgeBorder} ${courierMeta?.badgeText}`}
-                              >
-                                {isMr ? courierMeta?.nameMr : courierMeta?.name}
-                              </span>
-                            </div>
-
-                            {e.tracking_number ? (
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-mono text-xs font-bold text-charcoal bg-ivory-dark/60 px-2 py-0.5 rounded border border-border-warm">
-                                  {e.tracking_number}
-                                </span>
-                                {e.tracking_url && (
-                                  <a
-                                    href={e.tracking_url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-xs text-gold hover:underline inline-flex items-center gap-0.5 font-medium"
-                                  >
-                                    <span>{tx('Track', 'ट्रॅक')}</span>
-                                    <ExternalLink className="w-3 h-3" />
-                                  </a>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-[11px] text-amber-700 italic">
-                                {tx('Awaiting docket no.', 'डॉकेट नंबर बाकी')}
-                              </div>
-                            )}
-
-                            {/* Docket photo thumbnail if available */}
-                            {e.docket_photo_url && (
-                              <div className="pt-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewingPhotoUrl(e.docket_photo_url)}
-                                  className="inline-flex items-center gap-1 text-[11px] text-charcoal-light hover:text-gold transition-colors"
-                                >
-                                  <ImageIcon className="w-3 h-3 text-gold" />
-                                  <span>{tx('View Docket Photo', 'डॉकेट फोटो पहा')}</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(e)}
-                            className="inline-flex items-center gap-1 text-xs text-gold hover:underline font-semibold"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                            <span>{tx('+ Assign Courier & Docket', '+ कुरिअर व डॉकेट जोडा')}</span>
-                          </button>
-                        )}
-
-                        {/* Quick edit button if already assigned */}
-                        {e.courier_partner && (
-                          <div className="pt-1">
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(e)}
-                              className="text-[10px] text-charcoal-light hover:text-gold underline"
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold border ${courierMeta.badgeBg} ${courierMeta.badgeBorder} ${courierMeta.badgeText}`}
                             >
-                              {tx('Edit details', 'बदला')}
-                            </button>
+                              {(() => {
+                                if (e.notes && e.notes.includes('Shiprocket:')) {
+                                  const extracted = e.notes.replace(/.*Shiprocket:\s*/i, '').split('|')[0].trim();
+                                  if (extracted) return extracted;
+                                }
+                                return isMr ? courierMeta.nameMr : courierMeta.name;
+                              })()}
+                            </span>
                           </div>
-                        )}
+
+                          {e.tracking_number ? (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs font-bold text-charcoal bg-ivory-dark/60 px-2 py-0.5 rounded border border-border-warm">
+                                {e.tracking_number}
+                              </span>
+                              {e.tracking_url && (
+                                <a
+                                  href={e.tracking_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-gold hover:underline inline-flex items-center gap-0.5 font-medium"
+                                >
+                                  <span>{tx('Track', 'ट्रॅक')}</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedIds([e.id]);
+                                  handleOpenShiprocketDispatch();
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:text-purple-800 bg-purple-50 hover:bg-purple-100 px-2 py-0.5 rounded-lg border border-purple-200 transition-colors cursor-pointer"
+                              >
+                                <Rocket className="w-3 h-3 text-purple-600" />
+                                <span>{tx('Ship via Shiprocket', 'शिपरोकेटने बुक करा')}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(e)}
+                                className="text-[10px] text-charcoal-light hover:text-gold underline cursor-pointer"
+                                title={tx('Offline manual tracking number', 'मॅन्युअल ट्रॅकिंग')}
+                              >
+                                {tx('+ Manual', '+ मॅन्युअल')}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Docket photo thumbnail if available */}
+                          {e.docket_photo_url && (
+                            <div className="pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setViewingPhotoUrl(e.docket_photo_url)}
+                                className="inline-flex items-center gap-1 text-[11px] text-charcoal-light hover:text-gold transition-colors"
+                              >
+                                <ImageIcon className="w-3 h-3 text-gold" />
+                                <span>{tx('View Docket Photo', 'डॉकेट फोटो पहा')}</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Quick edit link if already assigned */}
+                          {e.tracking_number && (
+                            <div className="pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(e)}
+                                className="text-[10px] text-charcoal-light hover:text-gold underline cursor-pointer"
+                              >
+                                {tx('Edit details', 'बदला')}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
 
                       {/* Shipping Cost */}
@@ -3405,6 +3580,104 @@ export default function ShippingMasterApp() {
           </div>
         );
       })()}
+
+      {/* Handover Accountability Modal (Staff Dispatch Handover to Courier Person) */}
+      {handoverModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 border border-border-warm shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold">
+                  <Truck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-base sm:text-lg font-bold text-charcoal">
+                    {tx('Courier Handover & Accountability', 'कुरिअर हँडओव्हर व जबाबदारी नोंद')}
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    {tx(
+                      `Marking ${handoverTargetIds.length} parcel(s) as Out for Delivery`,
+                      `${handoverTargetIds.length} पार्सल कुरिअरकडे दिल्याचा दिनांक व वेळ नोंदवा`
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandoverModalOpen(false)}
+                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs sm:text-sm">
+              <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs leading-relaxed space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-indigo-700" />
+                  <span>{tx('Proof of Dispatch & Time Tracking', 'डिस्पॅच पुरावा व वेळ नोंद')}</span>
+                </div>
+                <p>
+                  {tx(
+                    'Logging the exact dispatch timestamp and carrier person name guarantees shop accountability. The status is marked as Out for Delivery.',
+                    'पार्सल दुकानातून निघताना अचूक वेळ आणि कुरिअर व्यक्तीचे नाव नोंदवल्याने पार्सल सुरक्षिततेची पूर्ण नोंद राहते.'
+                  )}
+                </p>
+              </div>
+
+              {/* Handover Person */}
+              <div>
+                <label className="block text-xs font-bold text-charcoal mb-1">
+                  {tx('Handed to Courier Person / Agent', 'पार्सल घेतलेल्या व्यक्तीचे नाव / कुरिअर')}
+                </label>
+                <input
+                  type="text"
+                  value={handoverPerson}
+                  onChange={(e) => setHandoverPerson(e.target.value)}
+                  placeholder={tx('e.g. Delhivery Pickup Boy / Rahul', 'उदा. डिलिव्हरी पिकअप बॉय / राहुल')}
+                  className="w-full border border-border-warm rounded-xl px-3 py-2 text-xs sm:text-sm bg-white focus:outline-none focus:border-gold"
+                />
+              </div>
+
+              {/* Handover Date & Time */}
+              <div>
+                <label className="block text-xs font-bold text-charcoal mb-1">
+                  {tx('Handover Date & Time (Shipped At)', 'कुरिअरकडे दिल्याची तारीख व वेळ')}
+                </label>
+                <input
+                  type="datetime-local"
+                  value={handoverTime}
+                  onChange={(e) => setHandoverTime(e.target.value)}
+                  className="w-full border border-border-warm rounded-xl px-3 py-2 text-xs sm:text-sm bg-white focus:outline-none focus:border-gold font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-border-warm">
+              <button
+                type="button"
+                onClick={() => setHandoverModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:text-charcoal hover:bg-ivory border border-border-warm transition-colors cursor-pointer"
+              >
+                {tx('Cancel', 'रद्द करा')}
+              </button>
+              <button
+                type="button"
+                disabled={handoverBusy}
+                onClick={handleConfirmHandover}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+              >
+                {handoverBusy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Truck className="w-3.5 h-3.5" />
+                )}
+                <span>{tx('Confirm & Log Handover', 'हँडओव्हर नोंद पूर्ण करा')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full Size Photo Viewer Modal */}
       {viewingPhotoUrl && (

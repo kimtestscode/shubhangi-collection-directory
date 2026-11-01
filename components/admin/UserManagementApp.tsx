@@ -1097,7 +1097,6 @@ export default function UserManagementApp() {
                   >
                     <option value="staff">{tx('Packing & Dispatch Staff', 'पॅकिंग व डिस्पॅच स्टाफ')}</option>
                     <option value="support">{tx('Customer Care & Chat Support', 'कस्टमर केअर व चॅट')}</option>
-                    <option value="courier_partner">{tx('Courier Delivery Partner', 'कुरिअर डिलिव्हरी पार्टनर')}</option>
                     <option value="admin">{tx('Store Admin', 'स्टोअर ॲडमीन')}</option>
                     <option value="super_admin">{tx('Super Admin (Store Owner)', 'सुपर ॲडमीन')}</option>
                   </select>

@@ -45,6 +45,20 @@ export interface Product {
   has_variants: boolean;
   option_types: OptionType[] | null;
   variants: InlineVariant[] | null;
+  // --- Extended Inventory Attributes ---
+  barcode?: string | null;
+  categories?: string[];
+  subcategories?: string[];
+  jewelry_type?: string;
+  stock_quantity?: number;
+  rack_number?: string | null;
+  box_number?: string | null;
+  slot_number?: string | null;
+  vendor_id?: string | null;
+  is_new_arrival?: boolean;
+  is_best_seller?: boolean;
+  size_chart_url?: string | null;
+  price_includes_shipping?: boolean;
   created_at: string;
   updated_at: string;
 }

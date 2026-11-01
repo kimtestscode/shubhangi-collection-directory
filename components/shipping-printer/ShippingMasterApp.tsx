@@ -2543,9 +2543,10 @@ export default function ShippingMasterApp() {
 
       {/* Edit Courier & Docket Modal */}
       {editingEntry && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-5 border border-border-warm shadow-xl">
-            <div className="flex items-center justify-between border-b border-border-warm pb-3">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 shrink-0 bg-white">
               <div>
                 <h3 className="font-serif text-lg font-bold text-charcoal">
                   {tx('Assign Courier & Docket', 'कुरिअर आणि डॉकेट जोडा')}
@@ -2555,14 +2556,16 @@ export default function ShippingMasterApp() {
                 </p>
               </div>
               <button
+                type="button"
                 onClick={() => setEditingEntry(null)}
-                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory"
+                className="p-1.5 rounded-xl text-charcoal-light hover:text-charcoal hover:bg-ivory cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4 text-xs sm:text-sm">
+            {/* Scrollable Form Body */}
+            <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
               {/* Customer & Address Details */}
               <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -2857,13 +2860,14 @@ export default function ShippingMasterApp() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-border-warm">
+            {/* Sticky Footer */}
+            <div className="flex items-center justify-between gap-2 p-4 sm:p-5 border-t border-border-warm shrink-0 bg-ivory/30">
               <button
                 type="button"
                 onClick={() => {
                   if (editingEntry) handleDelete(editingEntry);
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors cursor-pointer"
                 title={tx('Permanently delete this order from shipping master', 'ही ऑर्डर कायमची हटवा')}
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -2874,7 +2878,7 @@ export default function ShippingMasterApp() {
                 <button
                   type="button"
                   onClick={() => setEditingEntry(null)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory cursor-pointer"
                 >
                   {tx('Cancel', 'रद्द करा')}
                 </button>
@@ -2882,7 +2886,7 @@ export default function ShippingMasterApp() {
                   type="button"
                   onClick={handleSaveTracking}
                   disabled={savingEdit}
-                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs"
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs cursor-pointer"
                 >
                   {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   <span>{tx('Save & Update', 'सेव्ह करा')}</span>
@@ -2895,9 +2899,10 @@ export default function ShippingMasterApp() {
 
       {/* Bulk Update Pickup Date Modal */}
       {bulkDateModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 border border-border-warm shadow-xl">
-            <div className="flex items-center justify-between border-b border-border-warm pb-3">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 shrink-0 bg-white">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-full bg-gold/20 flex items-center justify-center text-gold">
                   <Calendar className="w-4 h-4" />
@@ -2917,13 +2922,14 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 onClick={() => setBulkDateModalOpen(false)}
-                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory"
+                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4 text-xs sm:text-sm">
+            {/* Scrollable Body */}
+            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
               <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs">
                 {tx(
                   'This will update the pickup date/time for all selected orders and mark them as Picked Up in the shipping log.',
@@ -2948,7 +2954,7 @@ export default function ShippingMasterApp() {
                 <button
                   type="button"
                   onClick={() => setBulkTargetDate(getTodayDateStr())}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-colors cursor-pointer ${
                     bulkTargetDate === getTodayDateStr()
                       ? 'bg-charcoal text-white border-charcoal'
                       : 'border-border-warm bg-white text-charcoal hover:bg-ivory'
@@ -2964,18 +2970,19 @@ export default function ShippingMasterApp() {
                     const pad = (n: number) => String(n).padStart(2, '0');
                     setBulkTargetDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
                   }}
-                  className="px-3 py-1.5 rounded-xl text-xs font-medium border border-border-warm bg-white text-charcoal hover:bg-ivory transition-colors"
+                  className="px-3 py-1.5 rounded-xl text-xs font-medium border border-border-warm bg-white text-charcoal hover:bg-ivory transition-colors cursor-pointer"
                 >
                   {tx('Yesterday (काल)', 'काल')}
                 </button>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-border-warm">
+            {/* Sticky Footer */}
+            <div className="flex items-center justify-end gap-2 p-4 sm:p-5 border-t border-border-warm shrink-0 bg-ivory/30">
               <button
                 type="button"
                 onClick={() => setBulkDateModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory cursor-pointer"
               >
                 {tx('Cancel', 'रद्द करा')}
               </button>
@@ -2983,7 +2990,7 @@ export default function ShippingMasterApp() {
                 type="button"
                 disabled={bulkBusy || !bulkTargetDate}
                 onClick={() => handleBulkUpdateDates(bulkTargetDate)}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs"
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-semibold hover:bg-charcoal/90 disabled:opacity-40 shadow-xs cursor-pointer"
               >
                 {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 <span>
@@ -3000,9 +3007,10 @@ export default function ShippingMasterApp() {
 
       {/* Shiprocket PDF Cropper Modal */}
       {cropModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-border-warm space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-warm shrink-0 bg-white">
               <div className="flex items-center gap-2">
                 <div className="p-2 rounded-xl bg-amber-100 text-amber-800">
                   <Scissors className="w-5 h-5" />
@@ -3022,13 +3030,14 @@ export default function ShippingMasterApp() {
                   setCropModalOpen(false);
                   setCropFile(null);
                 }}
-                className="p-1.5 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory transition-colors"
+                className="p-1.5 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4">
+            {/* Scrollable Body */}
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain flex-1">
               {/* File upload input */}
               <div>
                 <label className="block text-xs font-semibold text-charcoal mb-1.5">
@@ -3128,14 +3137,15 @@ export default function ShippingMasterApp() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-3 border-t border-border-warm">
+            {/* Sticky Footer */}
+            <div className="flex items-center justify-end gap-2 p-4 sm:p-5 border-t border-border-warm shrink-0 bg-ivory/30">
               <button
                 type="button"
                 onClick={() => {
                   setCropModalOpen(false);
                   setCropFile(null);
                 }}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-charcoal-light hover:bg-ivory transition-colors cursor-pointer"
               >
                 {tx('Cancel', 'रद्द करा')}
               </button>
@@ -3143,7 +3153,7 @@ export default function ShippingMasterApp() {
                 type="button"
                 disabled={croppingBusy || !cropFile}
                 onClick={handleCropSubmit}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-bold hover:bg-charcoal/90 disabled:opacity-40 transition-colors shadow-xs"
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-charcoal text-white text-xs font-bold hover:bg-charcoal/90 disabled:opacity-40 transition-colors shadow-xs cursor-pointer"
               >
                 {croppingBusy ? (
                   <>
@@ -3583,9 +3593,10 @@ export default function ShippingMasterApp() {
 
       {/* Handover Accountability Modal (Staff Dispatch Handover to Courier Person) */}
       {handoverModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 border border-border-warm shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between pb-3 border-b border-border-warm">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Sticky Header */}
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-warm shrink-0 bg-white">
               <div className="flex items-center gap-2">
                 <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold">
                   <Truck className="w-5 h-5" />
@@ -3605,13 +3616,14 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 onClick={() => setHandoverModalOpen(false)}
-                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory"
+                className="p-1 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-4 text-xs sm:text-sm">
+            {/* Scrollable Body */}
+            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
               <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs leading-relaxed space-y-1">
                 <div className="font-bold flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5 text-indigo-700" />
@@ -3653,7 +3665,8 @@ export default function ShippingMasterApp() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-border-warm">
+            {/* Sticky Footer */}
+            <div className="flex items-center justify-end gap-2.5 p-4 sm:p-5 border-t border-border-warm shrink-0 bg-ivory/30">
               <button
                 type="button"
                 onClick={() => setHandoverModalOpen(false)}

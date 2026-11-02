@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { Product, ProductInsert, CategoryItem, InlineVariant, OptionType } from '@/lib/types';
+import { Product, ProductInsert, InlineVariant, OptionType } from '@/lib/types';
 import { slugify } from '@/lib/utils';
 import StatusPhotoEditorModal from './StatusPhotoEditorModal';
 import {
-  Loader2, Plus, X, Wand2, Trash2, Sparkles, Upload,
+  Loader2, Plus, X, Wand2, Trash2, Sparkles,
   ImagePlus, QrCode, MapPin, Mic, MicOff, Check
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
@@ -173,6 +173,7 @@ export default function ProductForm({ product, mode }: Props) {
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [voiceNotice, setVoiceNotice] = useState('');
   const recognitionRef = useRef<any>(null);
+  const finalTranscriptRef = useRef('');
 
   // Form Fields
   const [productName, setProductName] = useState(product?.name || '');
@@ -296,19 +297,39 @@ export default function ProductForm({ product, mode }: Props) {
       recognition.interimResults = true;
       recognition.lang = 'en-IN';
 
+      // Keep whatever text was already confirmed in the transcript box
+      finalTranscriptRef.current = voiceTranscript ? voiceTranscript.trim() + ' ' : '';
+
       recognition.onstart = () => setIsListening(true);
+
+      // Fix echoing/duplication: Web Speech API provides all results across event.results
       recognition.onresult = (event: any) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
+        let currentSessionFinal = '';
+        let currentSessionInterim = '';
+
+        for (let i = 0; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            currentSessionFinal += res[0].transcript + ' ';
+          } else {
+            currentSessionInterim += res[0].transcript;
+          }
         }
-        setVoiceTranscript(prev => (prev ? prev + ' ' : '') + currentTranscript);
+
+        const full = (finalTranscriptRef.current + currentSessionFinal + currentSessionInterim).trim();
+        setVoiceTranscript(full);
       };
+
       recognition.onerror = (event: any) => {
-        setVoiceNotice(`Speech recognition error: ${event.error || 'Failed to capture'}`);
+        if (event.error !== 'no-speech') {
+          setVoiceNotice(`Speech recognition notice: ${event.error || 'Paused'}`);
+        }
         setIsListening(false);
       };
-      recognition.onend = () => setIsListening(false);
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
 
       recognitionRef.current = recognition;
       recognition.start();
@@ -352,7 +373,16 @@ export default function ProductForm({ product, mode }: Props) {
       }
     }
 
-    // If product name is empty, use transcript
+    // Check subcategory / finish match
+    for (const sub of SUBCATEGORIES) {
+      if (text.includes(sub.toLowerCase())) {
+        if (!subcategories.includes(sub)) {
+          setSubcategories(prev => [...prev, sub]);
+        }
+      }
+    }
+
+    // If product name is empty, extract from transcript
     if (!productName) {
       const cleaned = voiceTranscript
         .replace(/(?:price|rate|cost|rupees|rs\.?)\s*(?:is\s*)?\d+/gi, '')
@@ -363,7 +393,7 @@ export default function ProductForm({ product, mode }: Props) {
       }
     }
 
-    setVoiceNotice('Extracted fields from voice transcript!');
+    setVoiceNotice(isMr ? 'व्हॉइसवरून माहिती भरली गेली!' : 'Extracted fields from voice transcript!');
   };
 
   // --- Auto-generate SKU ---
@@ -371,7 +401,6 @@ export default function ProductForm({ product, mode }: Props) {
     const primaryCat = (categories[0] || '').toLowerCase().trim();
     const prefix = CATEGORY_PREFIX_MAP[primaryCat] || primaryCat.slice(0, 3).toUpperCase() || 'SC';
 
-    // Extract initials or clean words from product name
     let namePart = '';
     if (productName.trim()) {
       const words = productName.trim().split(/\s+/);
@@ -384,21 +413,18 @@ export default function ProductForm({ product, mode }: Props) {
       namePart = 'ITM';
     }
 
-    // Random uppercase 4-digit alphanumeric code
     const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
     const generated = `${prefix}-${namePart}${rand}`;
     setSku(generated);
 
-    // If user hasn't defined name/category yet, give friendly tip
     if (!productName.trim() || categories.length === 0) {
-      setSuccessMsg('Tip: Define category and name for a more specific SKU!');
+      setSuccessMsg(isMr ? 'सूचना: नेमका SKU मिळवण्यासाठी उत्पादन नाव व कॅटेगरी निवडा!' : 'Tip: Define category and name for a more specific SKU!');
       setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
   // --- Auto-generate Barcode ---
   const handleAutoBarcode = () => {
-    // 13-digit standard EAN style code starting with 890 (India) or 1234
     const rand = Math.floor(Math.random() * 9_000_000_00) + 1_000_000_00;
     const generated = `890${rand}`;
     setBarcode(generated);
@@ -511,15 +537,17 @@ export default function ProductForm({ product, mode }: Props) {
     setVariantRows(prev => prev.map(r => r._key === key ? { ...r, _uploading: true } : r));
     const url = await uploadSingleFile(file);
 
-    setVariantRows(prev => prev.map(r => {
-      if (r._key !== key) return r;
-      const updatedImages = url ? [...r.images, url].slice(0, 3) : r.images;
-      return {
-        ...r,
-        images: updatedImages,
-        _uploading: false,
-      };
-    }));
+    setVariantRows(prev => {
+      return prev.map(r => {
+        if (r._key !== key) return r;
+        const updatedImages = url ? [...r.images, url].slice(0, 3) : r.images;
+        return {
+          ...r,
+          images: updatedImages,
+          _uploading: false,
+        };
+      });
+    });
     e.target.value = '';
   };
 
@@ -533,11 +561,11 @@ export default function ProductForm({ product, mode }: Props) {
     setError('');
 
     if (!productName.trim()) {
-      setError('Please provide a product name.');
+      setError(isMr ? 'कृपया उत्पादनाचे नाव भरा.' : 'Please provide a product name.');
       return;
     }
     if (!price || isNaN(Number(price))) {
-      setError('Please enter a valid selling price.');
+      setError(isMr ? 'कृपया योग्य विक्री किंमत भरा.' : 'Please enter a valid selling price.');
       return;
     }
 
@@ -631,53 +659,56 @@ export default function ProductForm({ product, mode }: Props) {
     }
   };
 
-  return (
-    <form onSubmit={handleSubmit} className="bg-[#121214] text-[#f4f4f5] border border-[#27272a] rounded-2xl p-5 sm:p-7 shadow-2xl space-y-6">
+  const inputCls = "w-full px-3.5 py-2.5 bg-white border border-border-warm rounded-xl text-charcoal placeholder-charcoal-light/40 text-sm focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 transition-all font-medium";
+  const labelCls = "text-xs font-semibold uppercase tracking-wider text-charcoal-light block mb-1.5";
 
-      {/* ── 1. Voice Assist Header Card ── */}
-      <div className="border border-amber-500/30 rounded-xl p-4 bg-amber-500/5 transition-all">
+  return (
+    <form onSubmit={handleSubmit} className="bg-white border border-border-warm rounded-2xl p-6 sm:p-8 shadow-sm space-y-6 text-charcoal">
+
+      {/* ── 1. Voice Assist Header Card (Shubhangi Theme: Warm Ivory & Gold) ── */}
+      <div className="border border-gold/40 rounded-2xl p-4 bg-ivory/60 transition-all shadow-xs">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span className="text-white font-medium text-sm">
+            <Sparkles className="w-4 h-4 text-gold" />
+            <span className="text-charcoal font-semibold text-sm">
               {isMr ? 'व्हॉइस असिस्ट (बोलून भरा)' : 'Voice Assist'}
             </span>
           </div>
           {!voiceSupported && (
-            <span className="text-[#a1a1aa] text-xs">
-              {isMr ? 'या ब्राउझरमध्ये व्हॉइस सपोर्ट नाही (Chrome/Edge वापरा)' : 'Not supported in this browser — try Chrome or Edge'}
+            <span className="text-charcoal-light text-xs">
+              {isMr ? 'या ब्राउझरमध्ये व्हॉइस सपोर्ट नाही (Chrome किंवा Edge वापरा)' : 'Not supported in this browser — try Chrome or Edge'}
             </span>
           )}
         </div>
 
         {voiceSupported && (
           <div>
-            <div className="flex items-center gap-3 mb-3 flex-wrap">
+            <div className="flex items-center gap-2.5 mb-3 flex-wrap">
               <button
                 type="button"
                 onClick={isListening ? stopListening : startListening}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold tracking-wide transition-all shadow-xs ${
                   isListening
-                    ? 'bg-red-500/20 text-red-400 border border-red-500/40 animate-pulse'
-                    : 'bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 border border-amber-400/30'
+                    ? 'bg-red-50 text-red-600 border border-red-300 animate-pulse'
+                    : 'bg-white border border-gold text-charcoal hover:bg-gold hover:text-white'
                 }`}
               >
                 {isListening ? (
                   <>
-                    <MicOff className="w-4 h-4" />
+                    <MicOff className="w-3.5 h-3.5" />
                     <span>{isMr ? 'थांबवा' : 'Stop Listening'}</span>
                   </>
                 ) : (
                   <>
-                    <Mic className="w-4 h-4" />
+                    <Mic className="w-3.5 h-3.5 text-gold" />
                     <span>{isMr ? 'बोलणे सुरू करा' : 'Start Speaking'}</span>
                   </>
                 )}
               </button>
 
               {isListening && (
-                <span className="flex items-center gap-1.5 text-red-400 text-xs font-medium">
-                  <span className="w-2 h-2 rounded-full bg-red-400 animate-ping" />
+                <span className="flex items-center gap-1.5 text-red-600 text-xs font-medium">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
                   {isMr ? 'ऐकत आहे...' : 'Listening...'}
                 </span>
               )}
@@ -686,7 +717,7 @@ export default function ProductForm({ product, mode }: Props) {
                 <button
                   type="button"
                   onClick={parseWithVoice}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-amber-400 text-black rounded-lg text-xs font-semibold hover:bg-amber-300 transition-colors shadow-sm"
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gold hover:bg-gold/90 text-charcoal font-semibold rounded-xl text-xs shadow-xs transition-all"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>{isMr ? 'फॉर्ममध्ये भरा' : 'Auto-fill Fields'}</span>
@@ -697,7 +728,7 @@ export default function ProductForm({ product, mode }: Props) {
                 <button
                   type="button"
                   onClick={() => { setVoiceTranscript(''); setVoiceNotice(''); }}
-                  className="text-[#a1a1aa] hover:text-white text-xs underline ml-auto"
+                  className="text-charcoal-light hover:text-red-600 text-xs underline ml-auto transition-colors"
                 >
                   {isMr ? 'रद्द करा' : 'Discard Voice'}
                 </button>
@@ -709,14 +740,14 @@ export default function ProductForm({ product, mode }: Props) {
                 value={voiceTranscript}
                 onChange={e => setVoiceTranscript(e.target.value)}
                 rows={2}
-                className="w-full px-3 py-2 bg-[#18181b] border border-[#27272a] rounded-lg text-[#f4f4f5] text-xs focus:outline-none focus:border-amber-400 resize-none"
+                className="w-full px-3.5 py-2.5 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 resize-none font-sans"
                 placeholder="Transcript will appear here — you can edit before auto-filling"
               />
             )}
 
             {voiceNotice && (
-              <p className="text-amber-400 text-xs mt-1.5 flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" /> {voiceNotice}
+              <p className="text-gold text-xs mt-1.5 flex items-center gap-1 font-medium">
+                <Check className="w-3.5 h-3.5 text-gold" /> {voiceNotice}
               </p>
             )}
           </div>
@@ -725,7 +756,7 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 2. Product Name ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+        <label className={labelCls}>
           {isMr ? 'उत्पादनाचे नाव *' : 'Product Name *'}
         </label>
         <input
@@ -734,7 +765,7 @@ export default function ProductForm({ product, mode }: Props) {
           value={productName}
           onChange={e => setProductName(e.target.value)}
           placeholder="e.g. Ashtapallu 3 Layer Necklace"
-          className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white placeholder-[#71717a] text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all font-medium"
+          className={inputCls}
         />
       </div>
 
@@ -742,14 +773,14 @@ export default function ProductForm({ product, mode }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Category (select all that apply) */}
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'कॅटेगरी (लागू असलेल्या निवडा)' : 'Category (select all that apply)'}
           </label>
-          <div className="flex flex-col gap-1 px-3 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl max-h-48 overflow-y-auto overscroll-contain">
+          <div className="flex flex-col gap-1 px-3 py-2.5 bg-ivory/40 border border-border-warm rounded-xl max-h-48 overflow-y-auto overscroll-contain">
             {CATEGORY_LIST.map(c => {
               const checked = categories.includes(c);
               return (
-                <label key={c} className="flex items-center gap-2 text-[#d4d4d8] text-xs py-1 hover:text-white cursor-pointer select-none">
+                <label key={c} className="flex items-center gap-2 text-charcoal text-xs py-1 hover:text-gold cursor-pointer select-none transition-colors">
                   <input
                     type="checkbox"
                     checked={checked}
@@ -760,9 +791,9 @@ export default function ProductForm({ product, mode }: Props) {
                         setCategories(prev => prev.filter(x => x !== c));
                       }
                     }}
-                    className="w-4 h-4 rounded accent-amber-400 cursor-pointer bg-[#27272a] border-[#3f3f46]"
+                    className="w-4 h-4 rounded accent-gold cursor-pointer border-border-warm"
                   />
-                  <span>{c}</span>
+                  <span className={checked ? 'font-semibold text-charcoal' : 'text-charcoal-light'}>{c}</span>
                 </label>
               );
             })}
@@ -771,14 +802,14 @@ export default function ProductForm({ product, mode }: Props) {
 
         {/* Subcategory / Finish (select all that apply) */}
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'सब-कॅटेगरी / फिनिश (लागू असलेल्या निवडा)' : 'Subcategory / Finish (select all that apply)'}
           </label>
-          <div className="flex flex-col gap-1 px-3 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl max-h-48 overflow-y-auto overscroll-contain">
+          <div className="flex flex-col gap-1 px-3 py-2.5 bg-ivory/40 border border-border-warm rounded-xl max-h-48 overflow-y-auto overscroll-contain">
             {Array.from(new Set([...SUBCATEGORIES, ...subcategories])).map(s => {
               const checked = subcategories.includes(s);
               return (
-                <label key={s} className="flex items-center gap-2 text-[#d4d4d8] text-xs py-1 hover:text-white cursor-pointer select-none">
+                <label key={s} className="flex items-center gap-2 text-charcoal text-xs py-1 hover:text-gold cursor-pointer select-none transition-colors">
                   <input
                     type="checkbox"
                     checked={checked}
@@ -789,9 +820,9 @@ export default function ProductForm({ product, mode }: Props) {
                         setSubcategories(prev => prev.filter(x => x !== s));
                       }
                     }}
-                    className="w-4 h-4 rounded accent-amber-400 cursor-pointer bg-[#27272a] border-[#3f3f46]"
+                    className="w-4 h-4 rounded accent-gold cursor-pointer border-border-warm"
                   />
-                  <span>{s}</span>
+                  <span className={checked ? 'font-semibold text-charcoal' : 'text-charcoal-light'}>{s}</span>
                 </label>
               );
             })}
@@ -801,16 +832,16 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 4. Jewelry Type (Age Group omitted as requested) ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+        <label className={labelCls}>
           {isMr ? 'दागिना प्रकार (Jewelry Type)' : 'Jewelry Type'}
         </label>
         <select
           value={jewelryType}
           onChange={e => setJewelryType(e.target.value)}
-          className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+          className={inputCls}
         >
           {JEWELRY_TYPES.map(t => (
-            <option key={t} value={t} className="bg-[#18181b] text-white">
+            <option key={t} value={t}>
               {t}
             </option>
           ))}
@@ -821,7 +852,7 @@ export default function ProductForm({ product, mode }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* SKU */}
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'SKU / उत्पादन कोड' : 'SKU'}
           </label>
           <div className="flex gap-2">
@@ -830,12 +861,12 @@ export default function ProductForm({ product, mode }: Props) {
               value={sku}
               onChange={e => setSku(e.target.value.toUpperCase())}
               placeholder="e.g. NCK-A1852C"
-              className="flex-1 px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white font-mono text-sm placeholder-[#71717a] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all uppercase"
+              className={`${inputCls} font-mono uppercase`}
             />
             <button
               type="button"
               onClick={handleAutoSKU}
-              className="px-4 py-2.5 bg-amber-400/10 text-amber-400 border border-amber-400/40 rounded-xl text-xs font-bold hover:bg-amber-400/20 active:scale-95 transition-all shrink-0"
+              className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all shrink-0 active:scale-95 shadow-xs"
               title="Auto-generate SKU based on Category and Name"
             >
               Auto
@@ -845,7 +876,7 @@ export default function ProductForm({ product, mode }: Props) {
 
         {/* Barcode */}
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'बारकोड (Barcode)' : 'Barcode'}
           </label>
           <div className="flex gap-2">
@@ -854,15 +885,15 @@ export default function ProductForm({ product, mode }: Props) {
               value={barcode}
               onChange={e => setBarcode(e.target.value)}
               placeholder="e.g. 1234567890123"
-              className="flex-1 px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white font-mono text-sm placeholder-[#71717a] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+              className={`${inputCls} font-mono`}
             />
             <button
               type="button"
               onClick={handleAutoBarcode}
-              className="px-4 py-2.5 bg-amber-400/10 text-amber-400 border border-amber-400/40 rounded-xl text-xs font-bold hover:bg-amber-400/20 active:scale-95 transition-all flex items-center justify-center shrink-0"
+              className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-xs"
               title="Auto-generate 13-digit numeric Barcode"
             >
-              <QrCode className="w-4 h-4" />
+              <QrCode className="w-4 h-4 text-gold" />
             </button>
           </div>
         </div>
@@ -871,7 +902,7 @@ export default function ProductForm({ product, mode }: Props) {
       {/* ── 6. Pricing & Stock (3 Columns) ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'किंमत (₹) *' : 'Price (₹) *'}
           </label>
           <input
@@ -882,12 +913,12 @@ export default function ProductForm({ product, mode }: Props) {
             value={price}
             onChange={e => setPrice(e.target.value)}
             placeholder="1100"
-            className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+            className={inputCls}
           />
         </div>
 
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'मूळ किंमत / MRP (₹)' : 'Original Price (₹)'}
           </label>
           <input
@@ -897,12 +928,12 @@ export default function ProductForm({ product, mode }: Props) {
             value={originalPrice}
             onChange={e => setOriginalPrice(e.target.value)}
             placeholder="1500"
-            className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+            className={inputCls}
           />
         </div>
 
         <div>
-          <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+          <label className={labelCls}>
             {isMr ? 'शिल्लक स्टॉक (Stock Qty)' : 'Stock Qty'}
           </label>
           <input
@@ -911,18 +942,18 @@ export default function ProductForm({ product, mode }: Props) {
             value={stockQuantity}
             onChange={e => setStockQuantity(e.target.value)}
             placeholder="3"
-            className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+            className={inputCls}
           />
         </div>
       </div>
 
       {/* ── 7. Price Includes Shipping Toggle ── */}
-      <div className="flex items-center justify-between p-4 bg-[#18181b] border border-[#27272a] rounded-xl">
+      <div className="flex items-center justify-between p-4 bg-ivory/40 border border-border-warm rounded-xl">
         <div className="pr-4">
-          <p className="text-white text-sm font-semibold">
+          <p className="text-charcoal text-sm font-semibold">
             {isMr ? 'किंमतीत शिपिंग समाविष्ट आहे (Price Includes Shipping)' : 'Price Includes Shipping'}
           </p>
-          <p className="text-[#a1a1aa] text-xs mt-0.5 leading-relaxed">
+          <p className="text-charcoal-light text-xs mt-0.5 leading-relaxed">
             {priceIncludesShipping
               ? 'ON — this price already has shipping baked in (matches other channels). Ships free on the website, no matter the order total.'
               : 'OFF — shipping is calculated separately as usual at checkout.'}
@@ -932,11 +963,11 @@ export default function ProductForm({ product, mode }: Props) {
           type="button"
           onClick={() => setPriceIncludesShipping(v => !v)}
           className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${
-            priceIncludesShipping ? 'bg-amber-400' : 'bg-[#27272a]'
+            priceIncludesShipping ? 'bg-gold' : 'bg-gray-200'
           }`}
         >
           <span
-            className={`absolute top-1 w-4 h-4 rounded-full bg-black transition-all ${
+            className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-xs ${
               priceIncludesShipping ? 'left-7' : 'left-1'
             }`}
           />
@@ -944,50 +975,50 @@ export default function ProductForm({ product, mode }: Props) {
       </div>
 
       {/* ── 8. Product Variants Section ── */}
-      <div className="border border-[#27272a] rounded-xl overflow-hidden bg-[#18181b]">
+      <div className="border border-border-warm rounded-2xl overflow-hidden bg-white shadow-xs">
         <div
           onClick={() => setHasVariants(v => !v)}
-          className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-[#202024] transition-colors select-none"
+          className="flex items-center gap-3 px-4 py-3.5 cursor-pointer hover:bg-ivory/40 transition-colors select-none"
         >
           <input
             type="checkbox"
             checked={hasVariants}
             onChange={e => setHasVariants(e.target.checked)}
-            className="w-4 h-4 accent-amber-400 rounded cursor-pointer"
+            className="w-4 h-4 accent-gold rounded cursor-pointer"
           />
           <div>
-            <p className="text-white text-sm font-medium">
+            <p className="text-charcoal text-sm font-semibold">
               {isMr ? 'या उत्पादनाचे प्रकार आहेत (Size, Color, इत्यादी)' : 'This product has variants (size, color, etc.)'}
             </p>
-            <p className="text-[#a1a1aa] text-xs">
+            <p className="text-charcoal-light text-xs">
               {isMr ? 'वेगवेगळे पॅटर्न, आकार, फोटो व स्टॉक जोडा' : 'Define option types, generate combinations, and assign individual SKUs, stock, and photos.'}
             </p>
           </div>
         </div>
 
         {hasVariants && (
-          <div className="border-t border-[#27272a] bg-[#141416] p-4 sm:p-5 space-y-4">
+          <div className="border-t border-border-warm bg-ivory/20 p-4 sm:p-5 space-y-4">
             <div className="space-y-2.5">
-              <p className="text-xs font-bold uppercase tracking-wider text-[#a1a1aa]">Option Types</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-charcoal-light">Option Types</p>
               {variantOptionTypes.map((opt, idx) => (
                 <div key={idx} className="flex items-center gap-2">
                   <input
                     placeholder="Option name (e.g. Size)"
                     value={opt.name}
                     onChange={e => updateOptionType(idx, 'name', e.target.value)}
-                    className="w-32 sm:w-40 px-3 py-2 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-xs focus:outline-none focus:border-amber-400"
+                    className="w-32 sm:w-40 px-3 py-2 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold"
                   />
                   <input
                     placeholder="Values, comma separated (e.g. Small, Medium, Large)"
                     value={opt.valuesText}
                     onChange={e => updateOptionType(idx, 'valuesText', e.target.value)}
-                    className="flex-1 px-3 py-2 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-xs focus:outline-none focus:border-amber-400"
+                    className="flex-1 px-3 py-2 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold"
                   />
                   {variantOptionTypes.length > 1 && (
                     <button
                       type="button"
                       onClick={() => removeOptionType(idx)}
-                      className="p-1.5 text-[#a1a1aa] hover:text-red-400 transition-colors"
+                      className="p-1.5 text-charcoal-light hover:text-red-500 transition-colors"
                       title="Remove option type"
                     >
                       <X className="w-4 h-4" />
@@ -999,7 +1030,7 @@ export default function ProductForm({ product, mode }: Props) {
               <button
                 type="button"
                 onClick={addOptionType}
-                className="text-amber-400 text-xs font-semibold hover:underline flex items-center gap-1"
+                className="text-gold text-xs font-semibold hover:underline flex items-center gap-1"
               >
                 + Add Option Type
               </button>
@@ -1008,31 +1039,31 @@ export default function ProductForm({ product, mode }: Props) {
             <button
               type="button"
               onClick={regenerateVariantRows}
-              className="flex items-center gap-2 border border-amber-400/60 text-amber-400 hover:bg-amber-400/10 text-xs font-semibold px-4 py-2 rounded-xl transition-colors bg-[#18181b]"
+              className="flex items-center gap-2 border border-gold/60 text-charcoal hover:bg-gold/10 text-xs font-semibold px-4 py-2 rounded-xl transition-colors bg-white shadow-xs"
             >
-              <Wand2 className="w-3.5 h-3.5 text-amber-400" />
+              <Wand2 className="w-3.5 h-3.5 text-gold" />
               Generate Variants
             </button>
 
             {variantRows.length > 0 && (
-              <div className="overflow-x-auto rounded-xl border border-[#27272a] bg-[#18181b]">
+              <div className="overflow-x-auto rounded-xl border border-border-warm bg-white shadow-xs">
                 <table className="w-full text-xs min-w-[700px]">
                   <thead>
-                    <tr className="border-b border-[#27272a] bg-[#1c1c20]">
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">Variant</th>
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">SKU</th>
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">Barcode</th>
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">Price Override</th>
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">Stock</th>
-                      <th className="text-left py-2.5 px-3 font-semibold text-[#a1a1aa]">Photos (up to 3)</th>
-                      <th className="text-center py-2.5 px-3 font-semibold text-[#a1a1aa]">Active</th>
+                    <tr className="border-b border-border-warm bg-ivory-dark/60 text-charcoal-light">
+                      <th className="text-left py-2.5 px-3 font-semibold">Variant</th>
+                      <th className="text-left py-2.5 px-3 font-semibold">SKU</th>
+                      <th className="text-left py-2.5 px-3 font-semibold">Barcode</th>
+                      <th className="text-left py-2.5 px-3 font-semibold">Price Override</th>
+                      <th className="text-left py-2.5 px-3 font-semibold">Stock</th>
+                      <th className="text-left py-2.5 px-3 font-semibold">Photos (up to 3)</th>
+                      <th className="text-center py-2.5 px-3 font-semibold">Active</th>
                       <th className="py-2.5 px-2"></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[#27272a]">
+                  <tbody className="divide-y divide-border-warm">
                     {variantRows.map(row => (
-                      <tr key={row._key} className="hover:bg-[#202024] transition-colors">
-                        <td className="py-2.5 px-3 font-medium text-white whitespace-nowrap">
+                      <tr key={row._key} className="hover:bg-ivory/40 transition-colors">
+                        <td className="py-2.5 px-3 font-medium text-charcoal whitespace-nowrap">
                           {row.name}
                         </td>
                         <td className="py-2.5 px-3">
@@ -1040,7 +1071,7 @@ export default function ProductForm({ product, mode }: Props) {
                             type="text"
                             value={row.sku}
                             onChange={e => updateVariantRow(row._key, 'sku', e.target.value.toUpperCase())}
-                            className="w-28 px-2 py-1 bg-[#121214] border border-[#27272a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                            className="w-28 px-2 py-1 bg-white border border-border-warm rounded-lg text-charcoal font-mono text-xs focus:outline-none focus:border-gold"
                             placeholder="SKU"
                           />
                         </td>
@@ -1049,7 +1080,7 @@ export default function ProductForm({ product, mode }: Props) {
                             type="text"
                             value={row.barcode}
                             onChange={e => updateVariantRow(row._key, 'barcode', e.target.value)}
-                            className="w-24 px-2 py-1 bg-[#121214] border border-[#27272a] rounded-lg text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                            className="w-24 px-2 py-1 bg-white border border-border-warm rounded-lg text-charcoal font-mono text-xs focus:outline-none focus:border-gold"
                             placeholder="Barcode"
                           />
                         </td>
@@ -1061,7 +1092,7 @@ export default function ProductForm({ product, mode }: Props) {
                             value={row.price_override ?? ''}
                             onChange={e => updateVariantRow(row._key, 'price_override', e.target.value === '' ? null : Number(e.target.value))}
                             placeholder={price ? `₹${price}` : '0'}
-                            className="w-20 px-2 py-1 bg-[#121214] border border-[#27272a] rounded-lg text-white text-xs focus:outline-none focus:border-amber-400"
+                            className="w-20 px-2 py-1 bg-white border border-border-warm rounded-lg text-charcoal text-xs focus:outline-none focus:border-gold"
                           />
                         </td>
                         <td className="py-2.5 px-3">
@@ -1070,7 +1101,7 @@ export default function ProductForm({ product, mode }: Props) {
                             min="0"
                             value={row.stock}
                             onChange={e => updateVariantRow(row._key, 'stock', Number(e.target.value))}
-                            className="w-16 px-2 py-1 bg-[#121214] border border-[#27272a] rounded-lg text-white text-xs focus:outline-none focus:border-amber-400"
+                            className="w-16 px-2 py-1 bg-white border border-border-warm rounded-lg text-charcoal text-xs focus:outline-none focus:border-gold"
                           />
                         </td>
                         <td className="py-2.5 px-3">
@@ -1079,7 +1110,7 @@ export default function ProductForm({ product, mode }: Props) {
                               const url = row.images[slot];
                               if (url) {
                                 return (
-                                  <div key={slot} className="relative group w-7 h-7 rounded overflow-hidden border border-[#27272a] bg-black shrink-0">
+                                  <div key={slot} className="relative group w-7 h-7 rounded overflow-hidden border border-border-warm bg-white shrink-0 shadow-xs">
                                     <img src={url} alt="" className="w-full h-full object-cover" />
                                     <button
                                       type="button"
@@ -1095,10 +1126,10 @@ export default function ProductForm({ product, mode }: Props) {
                                 return (
                                   <label
                                     key={slot}
-                                    className={`w-7 h-7 border border-dashed border-[#3f3f46] rounded flex items-center justify-center cursor-pointer hover:border-amber-400 text-[#71717a] hover:text-amber-400 transition-colors shrink-0 ${row._uploading ? 'opacity-50 pointer-events-none' : ''}`}
+                                    className={`w-7 h-7 border border-dashed border-border-warm hover:border-gold rounded flex items-center justify-center cursor-pointer text-charcoal-light hover:text-gold transition-colors shrink-0 bg-white ${row._uploading ? 'opacity-50 pointer-events-none' : ''}`}
                                   >
                                     {row._uploading
-                                      ? <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                                      ? <Loader2 className="w-3 h-3 animate-spin text-gold" />
                                       : <Plus className="w-3 h-3" />
                                     }
                                     <input
@@ -1120,14 +1151,14 @@ export default function ProductForm({ product, mode }: Props) {
                             type="checkbox"
                             checked={row.is_active}
                             onChange={e => updateVariantRow(row._key, 'is_active', e.target.checked)}
-                            className="w-4 h-4 accent-amber-400 cursor-pointer"
+                            className="w-4 h-4 accent-gold cursor-pointer"
                           />
                         </td>
                         <td className="py-2.5 px-2 text-right">
                           <button
                             type="button"
                             onClick={() => removeVariantRow(row._key)}
-                            className="text-[#71717a] hover:text-red-400 p-1 rounded transition-colors"
+                            className="text-charcoal-light hover:text-red-500 p-1 rounded transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1144,8 +1175,8 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 9. Storage Location (Rack · Box · Slot) ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5 flex items-center gap-1.5">
-          <MapPin className="w-3.5 h-3.5 text-amber-400" />
+        <label className={`${labelCls} flex items-center gap-1.5`}>
+          <MapPin className="w-3.5 h-3.5 text-gold" />
           <span>{isMr ? 'साठवणूक स्थान (रॅक · बॉक्स · स्लॉट)' : 'Storage Location (Rack · Box · Slot)'}</span>
         </label>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1154,37 +1185,37 @@ export default function ProductForm({ product, mode }: Props) {
             value={rackNumber}
             onChange={e => setRackNumber(e.target.value)}
             placeholder="Rack (e.g. A1)"
-            className="px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all font-mono"
+            className={`${inputCls} font-mono`}
           />
           <input
             type="text"
             value={boxNumber}
             onChange={e => setBoxNumber(e.target.value)}
             placeholder="Box (e.g. B2)"
-            className="px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all font-mono"
+            className={`${inputCls} font-mono`}
           />
           <input
             type="text"
             value={slotNumber}
             onChange={e => setSlotNumber(e.target.value)}
             placeholder="Slot (e.g. S2)"
-            className="px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all font-mono"
+            className={`${inputCls} font-mono`}
           />
         </div>
       </div>
 
       {/* ── 10. Vendor (QRA Status omitted as requested) ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+        <label className={labelCls}>
           {isMr ? 'व्हेंडर (विक्रेता)' : 'Vendor'}
         </label>
         <select
           value={vendorId}
           onChange={e => setVendorId(e.target.value)}
-          className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/30 transition-all"
+          className={inputCls}
         >
           {VENDOR_OPTIONS.map(v => (
-            <option key={v} value={v === 'No vendor' ? '' : v} className="bg-[#18181b] text-white">
+            <option key={v} value={v === 'No vendor' ? '' : v}>
               {v}
             </option>
           ))}
@@ -1193,24 +1224,24 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 11. Product Images ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+        <label className={labelCls}>
           {isMr ? 'उत्पादनाचे फोटो (Product Images)' : 'Product Images'}
         </label>
         <div className="space-y-3">
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2.5">
               {images.map((url, idx) => (
-                <div key={idx} className="relative group w-20 h-20 rounded-xl overflow-hidden border border-[#27272a] bg-black">
+                <div key={idx} className="relative group w-20 h-20 rounded-xl overflow-hidden border border-border-warm bg-white shadow-xs">
                   <img src={url} alt="" className="w-full h-full object-cover" />
                   <button
                     type="button"
                     onClick={() => removeImage(url)}
-                    className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow"
                   >
                     <X className="w-3 h-3 text-white" />
                   </button>
                   {idx === 0 && (
-                    <span className="absolute bottom-1 left-1 bg-amber-400 text-black text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
+                    <span className="absolute bottom-1 left-1 bg-gold text-charcoal text-[9px] font-bold px-1.5 py-0.5 rounded shadow-xs">
                       Cover
                     </span>
                   )}
@@ -1219,16 +1250,16 @@ export default function ProductForm({ product, mode }: Props) {
             </div>
           )}
 
-          <label className={`flex items-center gap-2.5 px-4 py-3.5 border-2 border-dashed border-[#27272a] hover:border-amber-400/80 rounded-xl cursor-pointer transition-colors bg-[#18181b] ${uploadingImage ? 'opacity-50 pointer-events-none' : ''}`}>
+          <label className={`flex items-center gap-2.5 px-4 py-3.5 border-2 border-dashed border-border-warm hover:border-gold rounded-xl cursor-pointer transition-colors bg-ivory/30 ${uploadingImage ? 'opacity-50 pointer-events-none' : ''}`}>
             {uploadingImage ? (
               <>
-                <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
-                <span className="text-[#a1a1aa] text-xs font-medium">{isMr ? 'अपलोड होत आहे...' : 'Uploading photos...'}</span>
+                <Loader2 className="w-4 h-4 text-gold animate-spin" />
+                <span className="text-charcoal-light text-xs font-medium">{isMr ? 'अपलोड होत आहे...' : 'Uploading photos...'}</span>
               </>
             ) : (
               <>
-                <ImagePlus className="w-4 h-4 text-amber-400 shrink-0" />
-                <span className="text-[#a1a1aa] text-xs font-medium">
+                <ImagePlus className="w-4 h-4 text-gold shrink-0" />
+                <span className="text-charcoal-light text-xs font-medium">
                   {isMr ? 'फोटो अपलोड करण्यासाठी क्लिक करा (JPG, PNG, WebP — कमाल 5MB)' : 'Click to upload photos (JPG, PNG, WebP — max 5MB each)'}
                 </span>
               </>
@@ -1250,12 +1281,12 @@ export default function ProductForm({ product, mode }: Props) {
               onChange={e => setImageUrlInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addImageUrls(); } }}
               placeholder="Or paste image URL(s) — separate multiple with | or comma"
-              className="flex-1 px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-xs placeholder-[#71717a] focus:outline-none focus:border-amber-400"
+              className={`${inputCls} text-xs`}
             />
             <button
               type="button"
               onClick={addImageUrls}
-              className="px-4 py-2 bg-amber-400/10 text-amber-400 border border-amber-400/40 rounded-xl text-xs font-bold hover:bg-amber-400/20 transition-all shrink-0"
+              className="px-4 py-2 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all shrink-0 active:scale-95 shadow-xs"
             >
               Add
             </button>
@@ -1264,12 +1295,12 @@ export default function ProductForm({ product, mode }: Props) {
       </div>
 
       {/* ── 12. Publish to Website Toggle ── */}
-      <div className="flex items-center justify-between p-4 bg-[#18181b] border border-[#27272a] rounded-xl">
+      <div className="flex items-center justify-between p-4 bg-ivory/40 border border-border-warm rounded-xl">
         <div>
-          <p className="text-white text-sm font-semibold">
+          <p className="text-charcoal text-sm font-semibold">
             {isMr ? 'वेबसाईटवर प्रकाशित करा (Publish to Website)' : 'Publish to Website'}
           </p>
-          <p className="text-[#a1a1aa] text-xs mt-0.5">
+          <p className="text-charcoal-light text-xs mt-0.5">
             {isPublished
               ? (isMr ? 'सक्रिय: हे उत्पादन ग्राहकांना दिसेल' : 'Visible in catalog and shop searches')
               : (isMr ? 'लपवले: हे उत्पादन ग्राहकांना दिसणार नाही' : 'Hidden from storefront')}
@@ -1279,11 +1310,11 @@ export default function ProductForm({ product, mode }: Props) {
           type="button"
           onClick={() => setIsPublished(v => !v)}
           className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${
-            isPublished ? 'bg-amber-400' : 'bg-[#27272a]'
+            isPublished ? 'bg-gold' : 'bg-gray-200'
           }`}
         >
           <span
-            className={`absolute top-1 w-4 h-4 rounded-full bg-black transition-all ${
+            className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-xs ${
               isPublished ? 'left-7' : 'left-1'
             }`}
           />
@@ -1292,76 +1323,76 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 13. New Arrival & Best Seller Badges ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="flex items-center justify-between p-3.5 bg-[#18181b] border border-[#27272a] rounded-xl">
-          <p className="text-white text-sm font-medium">New Arrival</p>
+        <div className="flex items-center justify-between p-3.5 bg-ivory/40 border border-border-warm rounded-xl">
+          <p className="text-charcoal text-sm font-medium">New Arrival</p>
           <button
             type="button"
             onClick={() => setIsNewArrival(v => !v)}
             className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${
-              isNewArrival ? 'bg-amber-400' : 'bg-[#27272a]'
+              isNewArrival ? 'bg-gold' : 'bg-gray-200'
             }`}
           >
             <span
-              className={`absolute top-1 w-4 h-4 rounded-full bg-black transition-all ${
+              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-xs ${
                 isNewArrival ? 'left-7' : 'left-1'
               }`}
             />
           </button>
         </div>
 
-        <div className="flex items-center justify-between p-3.5 bg-[#18181b] border border-[#27272a] rounded-xl">
-          <p className="text-white text-sm font-medium">Best Seller</p>
+        <div className="flex items-center justify-between p-3.5 bg-ivory/40 border border-border-warm rounded-xl">
+          <p className="text-charcoal text-sm font-medium">Best Seller</p>
           <button
             type="button"
             onClick={() => setIsBestSeller(v => !v)}
             className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${
-              isBestSeller ? 'bg-amber-400' : 'bg-[#27272a]'
+              isBestSeller ? 'bg-gold' : 'bg-gray-200'
             }`}
           >
             <span
-              className={`absolute top-1 w-4 h-4 rounded-full bg-black transition-all ${
+              className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all shadow-xs ${
                 isBestSeller ? 'left-7' : 'left-1'
               }`}
             />
           </button>
         </div>
       </div>
-      <p className="text-[#71717a] text-xs -mt-3">
+      <p className="text-charcoal-light text-xs -mt-3">
         These add &quot;New&quot; / &quot;Bestseller&quot; badges individually on the storefront.
       </p>
 
       {/* ── 14. Size Chart (optional) ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1">
+        <label className={labelCls}>
           {isMr ? 'साईज चार्ट (ऐच्छिक)' : 'Size Chart (optional)'}
         </label>
-        <p className="text-[#71717a] text-xs mb-2">
+        <p className="text-charcoal-light text-xs mb-2">
           Upload one image — a &quot;View Size Chart&quot; link appears on the product page only when this is set.
         </p>
 
         {sizeChartUrl ? (
-          <div className="flex items-center gap-3 p-2.5 bg-[#18181b] border border-[#27272a] rounded-xl">
-            <img src={sizeChartUrl} alt="Size chart" className="w-14 h-14 object-cover rounded-lg border border-[#27272a]" />
-            <span className="text-[#a1a1aa] text-xs flex-1 truncate font-mono">{sizeChartUrl}</span>
+          <div className="flex items-center gap-3 p-2.5 bg-ivory/40 border border-border-warm rounded-xl">
+            <img src={sizeChartUrl} alt="Size chart" className="w-14 h-14 object-cover rounded-lg border border-border-warm" />
+            <span className="text-charcoal-light text-xs flex-1 truncate font-mono">{sizeChartUrl}</span>
             <button
               type="button"
               onClick={() => setSizeChartUrl('')}
-              className="text-red-400 hover:text-red-300 text-xs px-2.5 py-1 bg-red-500/10 rounded-lg transition-colors"
+              className="text-red-600 hover:text-red-700 text-xs px-2.5 py-1 bg-red-50 border border-red-200 rounded-lg transition-colors font-medium"
             >
               Remove
             </button>
           </div>
         ) : (
-          <label className={`flex items-center gap-2.5 px-4 py-3 border-2 border-dashed border-[#27272a] hover:border-amber-400/80 rounded-xl cursor-pointer transition-colors bg-[#18181b] ${uploadingSizeChart ? 'opacity-50 pointer-events-none' : ''}`}>
+          <label className={`flex items-center gap-2.5 px-4 py-3 border-2 border-dashed border-border-warm hover:border-gold rounded-xl cursor-pointer transition-colors bg-ivory/30 ${uploadingSizeChart ? 'opacity-50 pointer-events-none' : ''}`}>
             {uploadingSizeChart ? (
               <>
-                <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
-                <span className="text-xs text-[#a1a1aa]">Uploading size chart...</span>
+                <Loader2 className="w-4 h-4 text-gold animate-spin" />
+                <span className="text-xs text-charcoal-light">Uploading size chart...</span>
               </>
             ) : (
               <>
-                <ImagePlus className="w-4 h-4 text-amber-400" />
-                <span className="text-xs text-[#a1a1aa]">Upload size chart image</span>
+                <ImagePlus className="w-4 h-4 text-gold" />
+                <span className="text-xs text-charcoal-light">Upload size chart image</span>
               </>
             )}
             <input
@@ -1377,7 +1408,7 @@ export default function ProductForm({ product, mode }: Props) {
 
       {/* ── 15. Description ── */}
       <div>
-        <label className="text-[#a1a1aa] text-xs font-medium uppercase tracking-wider block mb-1.5">
+        <label className={labelCls}>
           {isMr ? 'उत्पादन वर्णन (Description)' : 'Description'}
         </label>
         <textarea
@@ -1385,29 +1416,29 @@ export default function ProductForm({ product, mode }: Props) {
           value={description}
           onChange={e => setDescription(e.target.value)}
           placeholder="Product description — material, occasion, specifications, styling advice..."
-          className="w-full px-3.5 py-2.5 bg-[#18181b] border border-[#27272a] rounded-xl text-white text-sm placeholder-[#71717a] focus:outline-none focus:border-amber-400 resize-none font-normal"
+          className={`${inputCls} resize-none font-normal`}
         />
       </div>
 
       {/* ── Error & Success notices ── */}
       {error && (
-        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs font-medium">
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-medium">
           {error}
         </div>
       )}
       {successMsg && (
-        <div className="p-3 bg-amber-400/10 border border-amber-400/30 rounded-xl text-amber-400 text-xs font-medium">
+        <div className="p-3 bg-gold/10 border border-gold/30 rounded-xl text-charcoal text-xs font-medium">
           {successMsg}
         </div>
       )}
 
       {/* ── 16. Action Buttons at Footer ── */}
-      <div className="flex items-center justify-between gap-3 pt-3 border-t border-[#27272a] flex-wrap">
+      <div className="flex items-center justify-between gap-3 pt-3 border-t border-border-warm flex-wrap">
         <button
           type="button"
           onClick={() => setIsStatusEditorOpen(true)}
           disabled={allStatusImages.length === 0}
-          className="flex items-center gap-1.5 border border-amber-400/50 text-amber-400 hover:bg-amber-400/10 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 disabled:pointer-events-none"
+          className="flex items-center gap-1.5 border-2 border-gold text-gold hover:bg-gold hover:text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 disabled:pointer-events-none shadow-xs"
           title="Create WhatsApp Status images with price & details stickers"
         >
           <Sparkles className="w-3.5 h-3.5" />
@@ -1418,7 +1449,7 @@ export default function ProductForm({ product, mode }: Props) {
           <button
             type="button"
             onClick={() => router.back()}
-            className="border border-[#27272a] hover:border-[#3f3f46] text-[#a1a1aa] hover:text-white px-5 py-2.5 rounded-xl text-xs font-semibold transition-colors"
+            className="border border-border-warm hover:border-gold hover:text-gold text-charcoal px-5 py-2.5 rounded-xl text-xs font-medium transition-colors bg-white shadow-xs"
           >
             {isMr ? 'रद्द करा' : 'Cancel'}
           </button>
@@ -1426,9 +1457,9 @@ export default function ProductForm({ product, mode }: Props) {
           <button
             type="submit"
             disabled={saving}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-black font-bold px-6 py-2.5 rounded-xl text-xs transition-all disabled:opacity-50 shadow-md hover:shadow-amber-500/20 active:scale-95"
+            className="flex items-center justify-center gap-2 bg-charcoal hover:bg-charcoal/90 text-white font-semibold px-6 py-2.5 rounded-xl text-xs transition-all disabled:opacity-50 shadow-sm active:scale-95"
           >
-            {saving && <Loader2 className="w-4 h-4 animate-spin text-black" />}
+            {saving && <Loader2 className="w-4 h-4 animate-spin text-white" />}
             <span>
               {saving
                 ? (isMr ? 'सेव्ह होत आहे...' : 'Saving...')

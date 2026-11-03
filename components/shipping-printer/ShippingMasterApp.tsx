@@ -7,7 +7,7 @@ import {
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
   X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors,
-  Rocket, FileText, CheckCheck, Wallet
+  Rocket, FileText, CheckCheck, Wallet, ClipboardList
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
@@ -112,6 +112,8 @@ export default function ShippingMasterApp() {
   const [cameraError, setCameraError] = useState('');
 
   const [search, setSearch] = useState('');
+  const [multiSearchOpen, setMultiSearchOpen] = useState(false);
+  const [pasteInputText, setPasteInputText] = useState('');
   const [filterDate, setFilterDate] = useState('');
   const [filterCourier, setFilterCourier] = useState<string>('all');
 
@@ -1318,10 +1320,137 @@ export default function ShippingMasterApp() {
     }
   }
 
+  // ─── Multi-Order Search Parsing & Diagnostics ─────────────────────────────
+  const parsedSearch = useMemo(() => {
+    const trimmed = (search || '').trim();
+    if (!trimmed) {
+      return { raw: '', isMulti: false, tokens: [] as string[], tokenSet: new Set<string>(), rawQuery: '' };
+    }
+
+    const hasDelimiter = /[,\n\r;\t]/.test(trimmed);
+    let rawList: string[] = [];
+
+    if (hasDelimiter) {
+      rawList = trimmed
+        .split(/[,\n\r;\t]+/)
+        .flatMap((part) => part.split(/\s+/))
+        .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
+        .filter(Boolean);
+    } else {
+      const spaceParts = trimmed
+        .split(/\s+/)
+        .map((t) => t.trim().toLowerCase().replace(/^#/, ''))
+        .filter(Boolean);
+
+      // If multiple space-separated tokens and all are numbers or order-like (e.g. 14763 14789 14793)
+      const isMultiOrder =
+        spaceParts.length > 1 &&
+        spaceParts.every((t) => /^\d+$/.test(t) || /^ord/i.test(t) || t.length >= 4);
+
+      if (isMultiOrder) {
+        rawList = spaceParts;
+      } else {
+        rawList = [trimmed.toLowerCase().replace(/^#/, '')];
+      }
+    }
+
+    const isMulti = rawList.length > 1;
+    const tokenSet = new Set(rawList);
+
+    return {
+      raw: trimmed,
+      isMulti,
+      tokens: rawList,
+      tokenSet,
+      rawQuery: trimmed.toLowerCase(),
+    };
+  }, [search]);
+
+  // Track matched vs missing tokens for multi-search diagnostic feedback
+  const multiSearchStats = useMemo(() => {
+    if (!parsedSearch.isMulti || parsedSearch.tokens.length === 0) {
+      return null;
+    }
+
+    const matchedTokens = new Set<string>();
+    const matchedOrderIds: string[] = [];
+
+    entries.forEach((e) => {
+      const cleanOrder = e.order_number.toLowerCase().replace(/^#/, '');
+      const cleanTrack = (e.tracking_number || '').toLowerCase().replace(/^#/, '');
+      const mobile = e.customer_mobile || '';
+      const name = (e.customer_name || '').toLowerCase();
+
+      parsedSearch.tokens.forEach((t) => {
+        if (
+          cleanOrder === t ||
+          cleanOrder.includes(t) ||
+          (cleanTrack && (cleanTrack === t || cleanTrack.includes(t))) ||
+          (mobile && mobile.includes(t)) ||
+          (name && name.includes(t))
+        ) {
+          matchedTokens.add(t);
+          if (!matchedOrderIds.includes(e.id)) {
+            matchedOrderIds.push(e.id);
+          }
+        }
+      });
+    });
+
+    const missingTokens = parsedSearch.tokens.filter((t) => !matchedTokens.has(t));
+
+    return {
+      totalRequested: parsedSearch.tokens.length,
+      matchedCount: matchedTokens.size,
+      matchedOrderIds,
+      missingTokens,
+      allMatched: missingTokens.length === 0,
+    };
+  }, [parsedSearch, entries]);
+
+  // Auto-select all matched orders when a multi-order list is entered/pasted
+  const lastAutoSelectedQueryRef = useRef<string>('');
+  useEffect(() => {
+    if (
+      parsedSearch.isMulti &&
+      multiSearchStats &&
+      multiSearchStats.matchedOrderIds.length > 0 &&
+      lastAutoSelectedQueryRef.current !== parsedSearch.raw
+    ) {
+      lastAutoSelectedQueryRef.current = parsedSearch.raw;
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...multiSearchStats.matchedOrderIds])));
+    }
+  }, [parsedSearch.raw, multiSearchStats]);
+
   const visible = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const { isMulti, tokens, tokenSet, rawQuery } = parsedSearch;
+
     return entries.filter((e) => {
-      // Status tab filter
+      // 1. If Multi-Order search: Primary filter is matching the pasted tokens
+      if (isMulti) {
+        const cleanOrder = e.order_number.toLowerCase().replace(/^#/, '');
+        const cleanTrack = (e.tracking_number ?? '').toLowerCase().replace(/^#/, '');
+        const custMobile = e.customer_mobile ?? '';
+        const custName = (e.customer_name ?? '').toLowerCase();
+
+        const matched =
+          tokenSet.has(cleanOrder) ||
+          (cleanTrack && tokenSet.has(cleanTrack)) ||
+          (custMobile && tokenSet.has(custMobile)) ||
+          tokens.some(
+            (t) =>
+              cleanOrder.includes(t) ||
+              cleanTrack.includes(t) ||
+              custMobile.includes(t) ||
+              custName.includes(t)
+          );
+
+        if (!matched) return false;
+        // Keep all explicitly searched orders visible without date or bundle filter hiding them
+        return true;
+      }
+
+      // 2. Standard single search & filter pipeline
       const effectiveStatus = String(e.status || (e.shipped_at ? 'out_for_delivery' : 'pending')).toLowerCase();
       if (statusTab !== 'all') {
         if (statusTab === 'pending' && effectiveStatus !== 'pending') return false;
@@ -1347,17 +1476,19 @@ export default function ShippingMasterApp() {
       }
 
       // Search query across order number, customer name, mobile, docket, handed_to, notes
-      if (!q) return true;
+      if (!rawQuery) return true;
+      const cleanOrder = e.order_number.toLowerCase().replace(/^#/, '');
       return (
-        e.order_number.toLowerCase().includes(q) ||
-        (e.customer_name ?? '').toLowerCase().includes(q) ||
-        (e.customer_mobile ?? '').includes(q) ||
-        (e.tracking_number ?? '').toLowerCase().includes(q) ||
-        (e.handed_to ?? '').toLowerCase().includes(q) ||
-        (e.notes ?? '').toLowerCase().includes(q)
+        e.order_number.toLowerCase().includes(rawQuery) ||
+        cleanOrder.includes(rawQuery) ||
+        (e.customer_name ?? '').toLowerCase().includes(rawQuery) ||
+        (e.customer_mobile ?? '').includes(rawQuery) ||
+        (e.tracking_number ?? '').toLowerCase().includes(rawQuery) ||
+        (e.handed_to ?? '').toLowerCase().includes(rawQuery) ||
+        (e.notes ?? '').toLowerCase().includes(rawQuery)
       );
     });
-  }, [entries, statusTab, filterCourier, filterDate, search, selectedBundleId, bundles]);
+  }, [entries, statusTab, filterCourier, filterDate, parsedSearch, selectedBundleId, bundles]);
 
   function exportCsv() {
     const esc = (v: string | null | undefined) => `"${(v ?? '').replace(/"/g, '""')}"`;
@@ -1912,15 +2043,104 @@ export default function ShippingMasterApp() {
         <div className="p-4 sm:p-5 border-b border-border-warm flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {/* Search */}
-            <div className="relative min-w-[220px]">
-              <Search className="w-4 h-4 text-charcoal-light absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="relative min-w-[260px] sm:min-w-[340px] md:min-w-[420px]">
+              <Search className="w-4 h-4 text-charcoal-light absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={tx('Search Order, Name, Mobile, Docket…', 'ऑर्डर, नाव, मोबाईल, डॉकेट शोधा…')}
-                className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm border border-border-warm rounded-xl focus:outline-none focus:border-gold"
+                onPaste={(e) => {
+                  const pasted = e.clipboardData.getData('text');
+                  if (pasted && (pasted.includes('\n') || pasted.includes(',') || pasted.trim().split(/\s+/).length > 1)) {
+                    e.preventDefault();
+                    const cleanTokens = pasted
+                      .split(/[\n,\r;\t]+/)
+                      .flatMap((p) => p.split(/\s+/))
+                      .map((s) => s.trim().replace(/^#/, ''))
+                      .filter(Boolean);
+                    setSearch(cleanTokens.join(', '));
+                  }
+                }}
+                placeholder={tx('Search Order(s), Mobile, Docket (paste list with commas/space/newlines)…', 'ऑर्डर(्स), मोबाईल, डॉकेट शोधा किंवा यादी पेस्ट करा…')}
+                className="w-full pl-9 pr-16 py-2 text-xs sm:text-sm border border-border-warm rounded-xl focus:outline-none focus:border-gold bg-white"
               />
+              <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    title={tx('Clear search', 'शोध पुसा')}
+                    className="p-1 text-charcoal-light hover:text-charcoal rounded-lg hover:bg-ivory transition-colors cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setMultiSearchOpen(!multiSearchOpen)}
+                  title={tx('Paste multi-line order list', 'मल्टी-लाइन ऑर्डर यादी पेस्ट करा')}
+                  className={`p-1.5 rounded-lg border transition-all text-xs font-semibold cursor-pointer ${
+                    multiSearchOpen
+                      ? 'bg-gold text-charcoal border-gold shadow-2xs'
+                      : 'border-border-warm text-charcoal-light hover:text-charcoal hover:border-gold'
+                  }`}
+                >
+                  <ClipboardList className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
+
+            {/* Multi-Line List Paste Drawer */}
+            {multiSearchOpen && (
+              <div className="w-full mt-2 p-3 sm:p-4 bg-ivory/80 border border-gold/40 rounded-2xl space-y-2 shadow-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-charcoal flex items-center gap-1.5">
+                    <ClipboardList className="w-4 h-4 text-gold" />
+                    {tx('Paste List of Order Numbers to Fetch & Select:', 'ऑर्डर क्रमांकांची यादी पेस्ट करा:')}
+                  </span>
+                  <span className="text-[11px] text-charcoal-light font-mono font-semibold">
+                    {pasteInputText.split(/[\n,\r;\s]+/).filter(Boolean).length} {tx('orders in box', 'ऑर्डर्स बॉक्समध्ये')}
+                  </span>
+                </div>
+                <textarea
+                  rows={4}
+                  value={pasteInputText}
+                  onChange={(e) => setPasteInputText(e.target.value)}
+                  placeholder={`14763\n14789\n14793\n14794\n... ${tx('(separated by newlines, commas, or spaces)', '(नवीन ओळी, स्वल्पविराम किंवा स्पेसने वेगळे करा)')}`}
+                  className="w-full p-2.5 text-xs font-mono bg-white border border-border-warm rounded-xl focus:outline-none focus:border-gold"
+                />
+                <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
+                  <span className="text-[11px] text-charcoal-light">
+                    {tx('Tip: Orders are automatically fetched and selected for instant bulk processing.', 'टीप: ऑर्डर्स आपोआप शोधून निवडल्या जातील.')}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const clean = pasteInputText
+                          .split(/[\n,\r;\t]+/)
+                          .flatMap((p) => p.split(/\s+/))
+                          .map((s) => s.trim().replace(/^#/, ''))
+                          .filter(Boolean)
+                          .join(', ');
+                        setSearch(clean);
+                        setMultiSearchOpen(false);
+                      }}
+                      disabled={!pasteInputText.trim()}
+                      className="px-3.5 py-1.5 rounded-xl bg-charcoal text-white text-xs font-bold hover:bg-charcoal/90 disabled:opacity-40 transition-all shadow-xs cursor-pointer"
+                    >
+                      {tx('Fetch & Select Orders', 'शोधा व निवडा')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMultiSearchOpen(false)}
+                      className="text-xs text-charcoal-light hover:text-charcoal px-2 py-1 cursor-pointer"
+                    >
+                      {tx('Close', 'बंद करा')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Courier filter */}
             <select
@@ -2043,6 +2263,60 @@ export default function ShippingMasterApp() {
                 `लक्ष द्या: ${counts.delayed} पार्सल २४-४८ तासांपूर्वी प्रिंट झाले आहेत पण अजून पिकअप झालेले नाहीत! कृपया पॅकिंग किंवा होल्ड तपासा.`
               )}
             </span>
+          </div>
+        )}
+
+        {/* Multi-Order Search Results & Instant Selection Banner */}
+        {multiSearchStats && (
+          <div className="bg-amber-50/90 border-b border-amber-300 px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-200 text-amber-900 font-bold font-mono">
+                <Layers className="w-4 h-4 text-amber-800" />
+                {tx('Multi-Order Search', 'मल्टी-ऑर्डर शोध')}: {multiSearchStats.matchedOrderIds.length} / {multiSearchStats.totalRequested} {tx('found in Shipping Master', 'नोंदीत सापडल्या')}
+              </span>
+              {multiSearchStats.missingTokens.length > 0 && (
+                <span className="text-red-700 font-semibold bg-red-100 px-2.5 py-1 rounded-xl border border-red-200">
+                  {tx('Not found in records', 'नोंदीत सापडल्या नाहीत')} ({multiSearchStats.missingTokens.length}):{' '}
+                  <strong className="font-mono">{multiSearchStats.missingTokens.join(', ')}</strong>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  const allSelected =
+                    multiSearchStats.matchedOrderIds.length > 0 &&
+                    multiSearchStats.matchedOrderIds.every((id) => selectedIds.includes(id));
+                  if (allSelected) {
+                    setSelectedIds((prev) => prev.filter((id) => !multiSearchStats.matchedOrderIds.includes(id)));
+                  } else {
+                    setSelectedIds((prev) => Array.from(new Set([...prev, ...multiSearchStats.matchedOrderIds])));
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-charcoal text-white font-bold hover:bg-charcoal/90 transition-all shadow-xs cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5 text-gold" />
+                <span>
+                  {multiSearchStats.matchedOrderIds.length > 0 &&
+                  multiSearchStats.matchedOrderIds.every((id) => selectedIds.includes(id))
+                    ? tx('Deselect Matched', 'निवड रद्द करा')
+                    : tx(
+                        `Select All ${multiSearchStats.matchedOrderIds.length} Matched`,
+                        `सर्व ${multiSearchStats.matchedOrderIds.length} ऑर्डर्स निवडा`
+                      )}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="text-charcoal-light hover:text-charcoal font-semibold underline px-2 py-1 cursor-pointer"
+              >
+                {tx('Clear Search', 'शोध पुसा')}
+              </button>
+            </div>
           </div>
         )}
 

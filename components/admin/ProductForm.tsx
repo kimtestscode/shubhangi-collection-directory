@@ -7,7 +7,7 @@ import { slugify } from '@/lib/utils';
 import StatusPhotoEditorModal from './StatusPhotoEditorModal';
 import {
   Loader2, Plus, X, Wand2, Trash2, Sparkles,
-  ImagePlus, QrCode, MapPin, Mic, MicOff, Check
+  ImagePlus, QrCode, MapPin, Mic, MicOff, Check, Zap
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 
@@ -16,7 +16,7 @@ interface Props {
   mode: 'create' | 'edit';
 }
 
-const CATEGORY_LIST = [
+export const CATEGORY_LIST = [
   'Necklaces',
   'Earrings',
   'Rings',
@@ -46,7 +46,7 @@ const CATEGORY_LIST = [
   'Bajuband/Armlets',
 ];
 
-const SUBCATEGORIES = [
+export const SUBCATEGORIES = [
   'American Diamond',
   'Copper',
   'Geru',
@@ -57,7 +57,7 @@ const SUBCATEGORIES = [
   'German Silver Polish',
 ];
 
-const JEWELRY_TYPES = [
+export const JEWELRY_TYPES = [
   'Imitation',
   'Real',
   'Semi-Precious',
@@ -67,7 +67,7 @@ const JEWELRY_TYPES = [
   '1 Gram Gold Formed',
 ];
 
-const VENDOR_OPTIONS = [
+export const VENDOR_OPTIONS = [
   'No vendor',
   'Direct Workshop / In-House',
   'Rajkot Artisan',
@@ -77,7 +77,7 @@ const VENDOR_OPTIONS = [
   'Custom / Other',
 ];
 
-const CATEGORY_PREFIX_MAP: Record<string, string> = {
+export const CATEGORY_PREFIX_MAP: Record<string, string> = {
   necklaces: 'NCK',
   choker: 'CHK',
   'long necklace': 'LNK',
@@ -105,6 +105,90 @@ const CATEGORY_PREFIX_MAP: Record<string, string> = {
   chain: 'CHN',
   kids: 'KID',
 };
+
+export const CATEGORY_BARCODE_CODE: Record<string, string> = {
+  necklaces: '01',
+  earrings: '02',
+  rings: '03',
+  bracelets: '04',
+  'combo sets': '05',
+  kids: '06',
+  bangles: '07',
+  kada: '08',
+  chain: '09',
+  choker: '10',
+  'long necklace': '11',
+  mangalsutra: '12',
+  'pooja bhandar': '13',
+  'rani haar': '14',
+  'short mangalsutra': '15',
+  mala: '16',
+  thushi: '17',
+  bugdi: '18',
+  nath: '19',
+  'ear cuff': '20',
+  'ear chain': '21',
+  jhumka: '22',
+  chinchpeti: '23',
+  'payal/anklets': '24',
+  kamarpatta: '25',
+  'hair accessories': '26',
+  'bajuband/armlets': '27',
+};
+
+// Generates a deterministic 7-digit numeric hash from normalized product name
+export function getNameNumericHash(name: string): string {
+  const clean = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!clean) return '1000001';
+  let hash = 5381;
+  for (let i = 0; i < clean.length; i++) {
+    hash = ((hash << 5) + hash) + clean.charCodeAt(i);
+    hash = hash & 0x7fffffff;
+  }
+  return String(hash % 10000000).padStart(7, '0');
+}
+
+// Compute standard EAN-13 modulo 10 checksum
+export function computeEAN13Checksum(first12: string): number {
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    const digit = parseInt(first12[i], 10) || 0;
+    sum += i % 2 === 0 ? digit : digit * 3;
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+// Generate Barcode directly based on Category and Name
+export function generateBarcodeFromCategoryAndName(categoryName: string, name: string): string {
+  const catKey = (categoryName || '').toLowerCase().trim();
+  const catCode = CATEGORY_BARCODE_CODE[catKey] || '99';
+  const nameHash = getNameNumericHash(name);
+  const first12 = `890${catCode}${nameHash}`;
+  const checkDigit = computeEAN13Checksum(first12);
+  return `${first12}${checkDigit}`;
+}
+
+// Generate SKU directly based on Category and Name
+export function generateSkuFromCategoryAndName(categoryName: string, name: string): string {
+  const catKey = (categoryName || '').toLowerCase().trim();
+  const prefix = CATEGORY_PREFIX_MAP[catKey] || catKey.slice(0, 3).toUpperCase() || 'SC';
+
+  let namePart = '';
+  if (name && name.trim()) {
+    const words = name.trim().split(/\s+/);
+    if (words.length >= 2) {
+      namePart = words.map(w => w[0]?.toUpperCase()).slice(0, 3).join('');
+    } else {
+      namePart = words[0].slice(0, 3).toUpperCase();
+    }
+  } else {
+    namePart = 'ITM';
+  }
+
+  const nameHash = getNameNumericHash(name);
+  const suffix = nameHash.slice(-4);
+  return `${prefix}-${namePart}-${suffix}`;
+}
 
 async function uploadSingleFile(file: File): Promise<string | null> {
   const fd = new FormData();
@@ -167,11 +251,12 @@ export default function ProductForm({ product, mode }: Props) {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Voice Assist
+  // Voice Assist & Gemini AI Dictation
   const [isListening, setIsListening] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [voiceSupported, setVoiceSupported] = useState(true);
   const [voiceNotice, setVoiceNotice] = useState('');
+  const [aiParsing, setAiParsing] = useState(false);
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef('');
 
@@ -297,12 +382,11 @@ export default function ProductForm({ product, mode }: Props) {
       recognition.interimResults = true;
       recognition.lang = 'en-IN';
 
-      // Keep whatever text was already confirmed in the transcript box
       finalTranscriptRef.current = voiceTranscript ? voiceTranscript.trim() + ' ' : '';
 
       recognition.onstart = () => setIsListening(true);
 
-      // Fix echoing/duplication: Web Speech API provides all results across event.results
+      // Eliminates word echoing/duplication by accumulating finalized segments + current interim
       recognition.onresult = (event: any) => {
         let currentSessionFinal = '';
         let currentSessionInterim = '';
@@ -322,7 +406,7 @@ export default function ProductForm({ product, mode }: Props) {
 
       recognition.onerror = (event: any) => {
         if (event.error !== 'no-speech') {
-          setVoiceNotice(`Speech recognition notice: ${event.error || 'Paused'}`);
+          setVoiceNotice(`Speech notice: ${event.error || 'Paused'}`);
         }
         setIsListening(false);
       };
@@ -334,7 +418,7 @@ export default function ProductForm({ product, mode }: Props) {
       recognitionRef.current = recognition;
       recognition.start();
     } catch (e: any) {
-      setVoiceNotice(`Could not initialize voice assist: ${e.message}`);
+      setVoiceNotice(`Could not start speech recognition: ${e.message}`);
       setIsListening(false);
     }
   };
@@ -346,43 +430,93 @@ export default function ProductForm({ product, mode }: Props) {
     setIsListening(false);
   };
 
-  // Auto-fill from voice transcript
-  const parseWithVoice = () => {
+  // ── Gemini AI Dictation & Product Field Parsing ──
+  const handleParseWithGemini = async () => {
+    const textToAnalyze = voiceTranscript.trim() || productName.trim();
+    if (!textToAnalyze) {
+      setError(isMr ? 'कृपया आधी व्हॉइसने बोला किंवा उत्पादनाचा मजकूर टाइप करा.' : 'Please speak or enter some product details into Voice Assist first.');
+      return;
+    }
+
+    setAiParsing(true);
+    setError('');
+    setVoiceNotice('');
+
+    try {
+      const res = await fetch('/api/ai/parse-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textToAnalyze }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Failed to parse with Gemini AI');
+      }
+
+      const d = json.data;
+      if (d.name) setProductName(d.name);
+      if (Array.isArray(d.categories) && d.categories.length > 0) {
+        setCategories(d.categories);
+      }
+      if (Array.isArray(d.subcategories) && d.subcategories.length > 0) {
+        setSubcategories(d.subcategories);
+      }
+      if (d.jewelry_type) setJewelryType(d.jewelry_type);
+      if (d.price != null && !isNaN(Number(d.price))) setPrice(String(d.price));
+      if (d.original_price != null && !isNaN(Number(d.original_price))) setOriginalPrice(String(d.original_price));
+      if (d.stock_quantity != null && !isNaN(Number(d.stock_quantity))) setStockQuantity(String(d.stock_quantity));
+      if (d.price_includes_shipping != null) setPriceIncludesShipping(Boolean(d.price_includes_shipping));
+      if (d.rack_number) setRackNumber(d.rack_number);
+      if (d.box_number) setBoxNumber(d.box_number);
+      if (d.slot_number) setSlotNumber(d.slot_number);
+      if (d.description) setDescription(d.description);
+
+      // Auto-generate Barcode & SKU directly based on the detected Category and Name
+      const targetCat = (Array.isArray(d.categories) && d.categories[0]) || categories[0] || 'Necklaces';
+      const targetName = d.name || productName || textToAnalyze;
+      const newSku = generateSkuFromCategoryAndName(targetCat, targetName);
+      const newBarcode = generateBarcodeFromCategoryAndName(targetCat, targetName);
+      setSku(newSku);
+      setBarcode(newBarcode);
+
+      setSuccessMsg(
+        isMr
+          ? `Gemini AI ने सर्व माहिती भरली! SKU: ${newSku}, बारकोड: ${newBarcode}`
+          : `Gemini AI auto-filled product fields & generated SKU (${newSku}) and Barcode (${newBarcode})!`
+      );
+      setTimeout(() => setSuccessMsg(''), 6000);
+    } catch (err: any) {
+      setError(err.message || 'Error parsing with Gemini API');
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
+  // Local heuristic fallback parser
+  const parseWithLocalFallback = () => {
     if (!voiceTranscript) return;
     const text = voiceTranscript.toLowerCase();
 
-    // Check price e.g. "price 1500" or "1500 rupees"
     const priceMatch = text.match(/(?:price|rate|cost|rupees|rs\.?)\s*(?:is\s*)?(\d+)/i) || text.match(/(\d+)\s*(?:rupees|rs)/i);
-    if (priceMatch && priceMatch[1]) {
-      setPrice(priceMatch[1]);
-    }
+    if (priceMatch && priceMatch[1]) setPrice(priceMatch[1]);
 
-    // Check stock e.g. "stock 5" or "5 pieces"
     const stockMatch = text.match(/(?:stock|quantity|qty|pieces|pcs)\s*(?:is\s*)?(\d+)/i);
-    if (stockMatch && stockMatch[1]) {
-      setStockQuantity(stockMatch[1]);
-    }
+    if (stockMatch && stockMatch[1]) setStockQuantity(stockMatch[1]);
 
-    // Check category match
     for (const cat of CATEGORY_LIST) {
       if (text.includes(cat.toLowerCase())) {
-        if (!categories.includes(cat)) {
-          setCategories(prev => [...prev, cat]);
-        }
+        if (!categories.includes(cat)) setCategories(prev => [...prev, cat]);
         break;
       }
     }
 
-    // Check subcategory / finish match
     for (const sub of SUBCATEGORIES) {
       if (text.includes(sub.toLowerCase())) {
-        if (!subcategories.includes(sub)) {
-          setSubcategories(prev => [...prev, sub]);
-        }
+        if (!subcategories.includes(sub)) setSubcategories(prev => [...prev, sub]);
       }
     }
 
-    // If product name is empty, extract from transcript
     if (!productName) {
       const cleaned = voiceTranscript
         .replace(/(?:price|rate|cost|rupees|rs\.?)\s*(?:is\s*)?\d+/gi, '')
@@ -393,41 +527,55 @@ export default function ProductForm({ product, mode }: Props) {
       }
     }
 
-    setVoiceNotice(isMr ? 'व्हॉइसवरून माहिती भरली गेली!' : 'Extracted fields from voice transcript!');
+    setVoiceNotice(isMr ? 'माहिती भरली गेली!' : 'Extracted basic fields!');
   };
 
-  // --- Auto-generate SKU ---
+  // ── Auto-generate SKU based on Category and Name ──
   const handleAutoSKU = () => {
-    const primaryCat = (categories[0] || '').toLowerCase().trim();
-    const prefix = CATEGORY_PREFIX_MAP[primaryCat] || primaryCat.slice(0, 3).toUpperCase() || 'SC';
-
-    let namePart = '';
-    if (productName.trim()) {
-      const words = productName.trim().split(/\s+/);
-      if (words.length >= 2) {
-        namePart = words.map(w => w[0]?.toUpperCase()).slice(0, 3).join('');
-      } else {
-        namePart = words[0].slice(0, 3).toUpperCase();
-      }
-    } else {
-      namePart = 'ITM';
+    const primaryCat = categories[0] || 'Necklaces';
+    const name = productName.trim();
+    if (!name) {
+      setError(isMr ? 'कृपया SKU तयार करण्यासाठी आधी उत्पादनाचे नाव प्रविष्ट करा.' : 'Please enter product name first to generate SKU.');
+      return;
     }
-
-    const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-    const generated = `${prefix}-${namePart}${rand}`;
+    const generated = generateSkuFromCategoryAndName(primaryCat, name);
     setSku(generated);
-
-    if (!productName.trim() || categories.length === 0) {
-      setSuccessMsg(isMr ? 'सूचना: नेमका SKU मिळवण्यासाठी उत्पादन नाव व कॅटेगरी निवडा!' : 'Tip: Define category and name for a more specific SKU!');
-      setTimeout(() => setSuccessMsg(''), 3000);
-    }
+    setSuccessMsg(isMr ? `SKU तयार झाला: ${generated}` : `Generated SKU based on ${primaryCat} & Name: ${generated}`);
+    setTimeout(() => setSuccessMsg(''), 3500);
   };
 
-  // --- Auto-generate Barcode ---
+  // ── Auto-generate Barcode based on Category and Name ──
   const handleAutoBarcode = () => {
-    const rand = Math.floor(Math.random() * 9_000_000_00) + 1_000_000_00;
-    const generated = `890${rand}`;
+    const primaryCat = categories[0] || 'Necklaces';
+    const name = productName.trim();
+    if (!name) {
+      setError(isMr ? 'कृपया बारकोड तयार करण्यासाठी आधी उत्पादनाचे नाव प्रविष्ट करा.' : 'Please enter product name first to generate Barcode.');
+      return;
+    }
+    const generated = generateBarcodeFromCategoryAndName(primaryCat, name);
     setBarcode(generated);
+    setSuccessMsg(isMr ? `बारकोड तयार झाला: ${generated}` : `Generated Barcode based on ${primaryCat} & Name: ${generated}`);
+    setTimeout(() => setSuccessMsg(''), 3500);
+  };
+
+  // ── Auto-generate BOTH SKU & Barcode at once ──
+  const handleAutoBoth = () => {
+    const primaryCat = categories[0] || 'Necklaces';
+    const name = productName.trim();
+    if (!name) {
+      setError(isMr ? 'कृपया आधी नाव आणि कॅटेगरी निश्चित करा.' : 'Please enter product name first.');
+      return;
+    }
+    const s = generateSkuFromCategoryAndName(primaryCat, name);
+    const b = generateBarcodeFromCategoryAndName(primaryCat, name);
+    setSku(s);
+    setBarcode(b);
+    setSuccessMsg(
+      isMr
+        ? `SKU (${s}) आणि बारकोड (${b}) कॅटेगरी व नावावरून तयार झाले!`
+        : `Generated both SKU (${s}) & Barcode (${b}) from Category (${primaryCat}) & Name!`
+    );
+    setTimeout(() => setSuccessMsg(''), 4500);
   };
 
   // Image Upload Handlers
@@ -597,15 +745,19 @@ export default function ProductForm({ product, mode }: Props) {
     const primaryCategory = categories[0] || 'Necklaces';
     const computedSlug = product?.slug || slugify(productName) || `prod-${Date.now()}`;
 
+    // Ensure SKU & Barcode are derived if empty
+    const finalSku = sku.trim() || generateSkuFromCategoryAndName(primaryCategory, productName.trim());
+    const finalBarcode = barcode.trim() || generateBarcodeFromCategoryAndName(primaryCategory, productName.trim());
+
     const payload: Partial<ProductInsert> = {
-      sku: sku.trim() || `SKU-${Date.now().toString(36).toUpperCase()}`,
+      sku: finalSku,
       name: productName.trim(),
       slug: computedSlug,
       category: primaryCategory,
       categories: categories,
       subcategories: subcategories,
       jewelry_type: jewelryType,
-      barcode: barcode.trim() || null,
+      barcode: finalBarcode,
       price: Number(price),
       regular_price: originalPrice.trim() !== '' ? Number(originalPrice) : null,
       stock_quantity: Number(stockQuantity) || 0,
@@ -665,25 +817,28 @@ export default function ProductForm({ product, mode }: Props) {
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-border-warm rounded-2xl p-6 sm:p-8 shadow-sm space-y-6 text-charcoal">
 
-      {/* ── 1. Voice Assist Header Card (Shubhangi Theme: Warm Ivory & Gold) ── */}
-      <div className="border border-gold/40 rounded-2xl p-4 bg-ivory/60 transition-all shadow-xs">
+      {/* ── 1. Voice Assist & Gemini AI Dictation Card ── */}
+      <div className="border border-gold/40 rounded-2xl p-4 sm:p-5 bg-ivory/60 transition-all shadow-xs">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-gold" />
             <span className="text-charcoal font-semibold text-sm">
-              {isMr ? 'व्हॉइस असिस्ट (बोलून भरा)' : 'Voice Assist'}
+              {isMr ? 'व्हॉइस असिस्ट व जेमिनी AI डिक्टेशन' : 'Voice Assist & Gemini AI Dictation'}
+            </span>
+            <span className="bg-gold/15 text-charcoal border border-gold/40 text-[10px] font-bold px-2 py-0.5 rounded-full">
+              Gemini AI
             </span>
           </div>
           {!voiceSupported && (
             <span className="text-charcoal-light text-xs">
-              {isMr ? 'या ब्राउझरमध्ये व्हॉइस सपोर्ट नाही (Chrome किंवा Edge वापरा)' : 'Not supported in this browser — try Chrome or Edge'}
+              {isMr ? 'या ब्राउझरमध्ये व्हॉइस सपोर्ट नाही (Chrome किंवा Edge वापरा)' : 'Voice not supported in this browser — type into box below for Gemini'}
             </span>
           )}
         </div>
 
-        {voiceSupported && (
-          <div>
-            <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+            {voiceSupported && (
               <button
                 type="button"
                 onClick={isListening ? stopListening : startListening}
@@ -705,53 +860,76 @@ export default function ProductForm({ product, mode }: Props) {
                   </>
                 )}
               </button>
+            )}
 
-              {isListening && (
-                <span className="flex items-center gap-1.5 text-red-600 text-xs font-medium">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                  {isMr ? 'ऐकत आहे...' : 'Listening...'}
-                </span>
-              )}
+            {isListening && (
+              <span className="flex items-center gap-1.5 text-red-600 text-xs font-medium">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                {isMr ? 'ऐकत आहे...' : 'Listening...'}
+              </span>
+            )}
 
-              {voiceTranscript && !isListening && (
-                <button
-                  type="button"
-                  onClick={parseWithVoice}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-gold hover:bg-gold/90 text-charcoal font-semibold rounded-xl text-xs shadow-xs transition-all"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>{isMr ? 'फॉर्ममध्ये भरा' : 'Auto-fill Fields'}</span>
-                </button>
+            {/* Primary Gemini AI Parse Button */}
+            <button
+              type="button"
+              onClick={handleParseWithGemini}
+              disabled={aiParsing || (!voiceTranscript && !productName)}
+              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-gold to-gold-light/90 hover:from-gold/90 hover:to-gold text-charcoal font-bold rounded-xl text-xs shadow-sm transition-all disabled:opacity-50 active:scale-95 cursor-pointer"
+              title="Send speech or description to Gemini AI to extract fields, SKU, and Barcode"
+            >
+              {aiParsing ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-charcoal" />
+                  <span>{isMr ? 'जेमिनी विश्लेषण करत आहे...' : 'Gemini AI Analyzing...'}</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-charcoal" />
+                  <span>{isMr ? 'जेमिनी AI ने सर्व भरा' : 'Parse & Auto-Fill with Gemini AI'}</span>
+                </>
               )}
+            </button>
 
-              {voiceTranscript && (
-                <button
-                  type="button"
-                  onClick={() => { setVoiceTranscript(''); setVoiceNotice(''); }}
-                  className="text-charcoal-light hover:text-red-600 text-xs underline ml-auto transition-colors"
-                >
-                  {isMr ? 'रद्द करा' : 'Discard Voice'}
-                </button>
-              )}
-            </div>
+            {voiceTranscript && !isListening && (
+              <button
+                type="button"
+                onClick={parseWithLocalFallback}
+                className="text-charcoal-light hover:text-gold text-xs underline font-medium"
+                title="Quick local keyword extraction"
+              >
+                {isMr ? 'साधे भरणे' : 'Quick Local Fill'}
+              </button>
+            )}
 
             {voiceTranscript && (
-              <textarea
-                value={voiceTranscript}
-                onChange={e => setVoiceTranscript(e.target.value)}
-                rows={2}
-                className="w-full px-3.5 py-2.5 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 resize-none font-sans"
-                placeholder="Transcript will appear here — you can edit before auto-filling"
-              />
-            )}
-
-            {voiceNotice && (
-              <p className="text-gold text-xs mt-1.5 flex items-center gap-1 font-medium">
-                <Check className="w-3.5 h-3.5 text-gold" /> {voiceNotice}
-              </p>
+              <button
+                type="button"
+                onClick={() => { setVoiceTranscript(''); setVoiceNotice(''); }}
+                className="text-charcoal-light hover:text-red-600 text-xs underline ml-auto transition-colors"
+              >
+                {isMr ? 'रद्द करा' : 'Clear Dictation'}
+              </button>
             )}
           </div>
-        )}
+
+          <textarea
+            value={voiceTranscript}
+            onChange={e => setVoiceTranscript(e.target.value)}
+            rows={2}
+            className="w-full px-3.5 py-2.5 bg-white border border-border-warm rounded-xl text-charcoal text-xs focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 resize-none font-sans"
+            placeholder={
+              isMr
+                ? 'उदा. "रॉयल कुंदन चोकर नेकलेस सेट कॉपर फिनिशमध्ये, किंमत १८५०, एमआरपी २५००, स्टॉक ५, रॅक A1 बॉक्स B2"'
+                : 'Speak or type product details e.g. "Royal Kundan choker necklace set in copper finish, price 1850, MRP 2500, stock 5, rack A1 box B2" — then click "Parse & Auto-Fill with Gemini AI"'
+            }
+          />
+
+          {voiceNotice && (
+            <p className="text-gold text-xs mt-1.5 flex items-center gap-1 font-medium">
+              <Check className="w-3.5 h-3.5 text-gold" /> {voiceNotice}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* ── 2. Product Name ── */}
@@ -848,54 +1026,84 @@ export default function ProductForm({ product, mode }: Props) {
         </select>
       </div>
 
-      {/* ── 5. SKU & Barcode with Auto buttons ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* SKU */}
-        <div>
-          <label className={labelCls}>
-            {isMr ? 'SKU / उत्पादन कोड' : 'SKU'}
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={sku}
-              onChange={e => setSku(e.target.value.toUpperCase())}
-              placeholder="e.g. NCK-A1852C"
-              className={`${inputCls} font-mono uppercase`}
-            />
-            <button
-              type="button"
-              onClick={handleAutoSKU}
-              className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all shrink-0 active:scale-95 shadow-xs"
-              title="Auto-generate SKU based on Category and Name"
-            >
-              Auto
-            </button>
+      {/* ── 5. SKU & Barcode with Name/Category Auto buttons ── */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* SKU */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-charcoal-light">
+                {isMr ? 'SKU / उत्पादन कोड' : 'SKU'}
+              </label>
+              <span className="text-[10px] text-charcoal-light/70 font-mono">
+                Prefix: {CATEGORY_PREFIX_MAP[(categories[0] || '').toLowerCase()] || 'SC'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={sku}
+                onChange={e => setSku(e.target.value.toUpperCase())}
+                placeholder="e.g. NCK-A18-5201"
+                className={`${inputCls} font-mono uppercase`}
+              />
+              <button
+                type="button"
+                onClick={handleAutoSKU}
+                className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all shrink-0 active:scale-95 shadow-xs"
+                title="Auto-generate SKU derived from Category & Name"
+              >
+                Auto
+              </button>
+            </div>
+          </div>
+
+          {/* Barcode */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-charcoal-light">
+                {isMr ? 'बारकोड (Barcode EAN-13)' : 'Barcode (EAN-13)'}
+              </label>
+              <span className="text-[10px] text-charcoal-light/70 font-mono">
+                Cat Code: {CATEGORY_BARCODE_CODE[(categories[0] || '').toLowerCase()] || '99'}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={barcode}
+                onChange={e => setBarcode(e.target.value)}
+                placeholder="e.g. 8900112345678"
+                className={`${inputCls} font-mono`}
+              />
+              <button
+                type="button"
+                onClick={handleAutoBarcode}
+                className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-xs"
+                title="Auto-generate 13-digit EAN Barcode derived from Category & Name"
+              >
+                <QrCode className="w-4 h-4 text-gold" />
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Barcode */}
-        <div>
-          <label className={labelCls}>
-            {isMr ? 'बारकोड (Barcode)' : 'Barcode'}
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={barcode}
-              onChange={e => setBarcode(e.target.value)}
-              placeholder="e.g. 1234567890123"
-              className={`${inputCls} font-mono`}
-            />
-            <button
-              type="button"
-              onClick={handleAutoBarcode}
-              className="px-4 py-2.5 bg-ivory border border-gold/40 text-charcoal hover:bg-gold/15 rounded-xl text-xs font-bold transition-all flex items-center justify-center shrink-0 active:scale-95 shadow-xs"
-              title="Auto-generate 13-digit numeric Barcode"
-            >
-              <QrCode className="w-4 h-4 text-gold" />
-            </button>
-          </div>
+        {/* Quick button to generate both SKU & Barcode at once */}
+        <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+          <p className="text-[11px] text-charcoal-light">
+            {isMr
+              ? '💡 SKU आणि बारकोड दोन्ही निवडलेल्या कॅटेगरी आणि नावावरून थेट तयार होतात.'
+              : '💡 Both SKU and Barcode are mathematically derived from your selected Category and Product Name.'}
+          </p>
+          <button
+            type="button"
+            onClick={handleAutoBoth}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-ivory border border-gold/50 text-charcoal hover:bg-gold/20 rounded-lg text-xs font-semibold transition-all shadow-xs"
+            title="Generate both SKU and Barcode from current Category and Name"
+          >
+            <Zap className="w-3 h-3 text-gold" />
+            <span>{isMr ? 'दोन्ही एकत्र तयार करा (SKU + बारकोड)' : 'Auto-Generate Both (SKU & Barcode)'}</span>
+          </button>
         </div>
       </div>
 
@@ -1427,8 +1635,9 @@ export default function ProductForm({ product, mode }: Props) {
         </div>
       )}
       {successMsg && (
-        <div className="p-3 bg-gold/10 border border-gold/30 rounded-xl text-charcoal text-xs font-medium">
-          {successMsg}
+        <div className="p-3 bg-gold/15 border border-gold/40 rounded-xl text-charcoal text-xs font-medium flex items-center gap-2">
+          <Check className="w-4 h-4 text-gold shrink-0" />
+          <span>{successMsg}</span>
         </div>
       )}
 

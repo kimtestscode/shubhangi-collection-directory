@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase';
 
 const CANDIDATE_MODELS = [
   'gemini-3.5-flash-lite',
@@ -39,9 +40,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Please provide text or audio to parse.' }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    let apiKey = process.env.GEMINI_API_KEY;
+
+    // Production database fallback if environment variable is not yet populated on Vercel
     if (!apiKey) {
-      return NextResponse.json({ error: 'GEMINI_API_KEY is not configured in environment variables.' }, { status: 500 });
+      try {
+        const supabase = createAdminClient();
+        const { data } = await supabase
+          .from('admin_users')
+          .select('password')
+          .eq('username', '_sys_config_gemini')
+          .single();
+        if (data?.password) {
+          apiKey = data.password;
+        }
+      } catch (dbErr: any) {
+        console.warn('Gemini key database lookup notice:', dbErr?.message);
+      }
+    }
+
+    if (!apiKey) {
+      return NextResponse.json({ error: 'GEMINI_API_KEY is not configured in environment variables or database.' }, { status: 500 });
     }
 
     const parts: any[] = [];

@@ -2818,7 +2818,7 @@ export default function ShippingMasterApp() {
       {/* Edit Courier & Docket Modal */}
       {editingEntry && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[min(90vh,720px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Sticky Header */}
             <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 shrink-0 bg-white">
               <div>
@@ -2839,7 +2839,7 @@ export default function ShippingMasterApp() {
             </div>
 
             {/* Scrollable Form Body */}
-            <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
+            <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1 min-h-0">
               {/* Customer & Address Details */}
               <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-2.5">
                 <div className="flex items-center justify-between">
@@ -3174,7 +3174,7 @@ export default function ShippingMasterApp() {
       {/* Bulk Update Pickup Date Modal */}
       {bulkDateModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[min(90vh,640px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Sticky Header */}
             <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 shrink-0 bg-white">
               <div className="flex items-center gap-2">
@@ -3203,7 +3203,7 @@ export default function ShippingMasterApp() {
             </div>
 
             {/* Scrollable Body */}
-            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
+            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1 min-h-0">
               <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-amber-900 text-xs">
                 {tx(
                   'This will update the pickup date/time for all selected orders and mark them as Picked Up in the shipping log.',
@@ -3282,7 +3282,7 @@ export default function ShippingMasterApp() {
       {/* Shiprocket PDF Cropper Modal */}
       {cropModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[min(90vh,700px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Sticky Header */}
             <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-warm shrink-0 bg-white">
               <div className="flex items-center gap-2">
@@ -3311,7 +3311,7 @@ export default function ShippingMasterApp() {
             </div>
 
             {/* Scrollable Body */}
-            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain flex-1">
+            <div className="p-4 sm:p-6 space-y-4 overflow-y-auto overscroll-contain flex-1 min-h-0">
               {/* File upload input */}
               <div>
                 <label className="block text-xs font-semibold text-charcoal mb-1.5">
@@ -3868,7 +3868,7 @@ export default function ShippingMasterApp() {
       {/* Handover Accountability Modal (Staff Dispatch Handover to Courier Person) */}
       {handoverModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[92vh] sm:max-h-[88vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white rounded-3xl max-w-md w-full border border-border-warm shadow-2xl my-auto flex flex-col max-h-[min(90vh,640px)] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             {/* Sticky Header */}
             <div className="flex items-center justify-between p-4 sm:p-5 border-b border-border-warm shrink-0 bg-white">
               <div className="flex items-center gap-2">
@@ -3897,7 +3897,7 @@ export default function ShippingMasterApp() {
             </div>
 
             {/* Scrollable Body */}
-            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1">
+            <div className="p-4 sm:p-5 space-y-4 text-xs sm:text-sm overflow-y-auto overscroll-contain flex-1 min-h-0">
               <div className="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 text-xs leading-relaxed space-y-1">
                 <div className="font-bold flex items-center gap-1.5">
                   <CheckCircle2 className="w-3.5 h-3.5 text-indigo-700" />

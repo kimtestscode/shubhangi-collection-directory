@@ -14,13 +14,45 @@ export default function AddressPrinterApp() {
   const [rawInput, setRawInput] = useState("");
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [syncNotice, setSyncNotice] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  async function syncOrdersToMaster(ordersToSync: Order[]) {
+    if (!ordersToSync.length) return;
+    setSyncing(true);
+    setSyncNotice('');
+    try {
+      const res = await fetch('/api/shipping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_orders', orders: ordersToSync }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyncNotice(`✓ ${data.count || ordersToSync.length} orders recorded in Shipping Master`);
+      } else {
+        setSyncNotice(`Note: Generated locally; recording returned: ${data.error || res.statusText}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to sync orders to shipping master:', err);
+      setSyncNotice('Note: Could not reach Shipping Master service');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   function handleGenerate() {
     if (!rawInput.trim()) return;
     const result = parseWhatsAppBatch(rawInput);
     setParseResult(result);
     setOrders(result.orders);
+    syncOrdersToMaster(result.orders);
     setScreen('review');
+  }
+
+  function handleProceedToPrint() {
+    syncOrdersToMaster(orders);
+    setScreen('print');
   }
 
   function handleLoadSample() {
@@ -31,6 +63,7 @@ export default function AddressPrinterApp() {
     setRawInput('');
     setParseResult(null);
     setOrders([]);
+    setSyncNotice('');
     setScreen('input');
   }
 
@@ -47,8 +80,10 @@ export default function AddressPrinterApp() {
         preamble={parseResult.preamble}
         duplicates={parseResult.duplicates}
         onOrdersChange={setOrders}
-        onProceedToPrint={() => setScreen('print')}
+        onProceedToPrint={handleProceedToPrint}
         onBack={() => setScreen('input')}
+        syncNotice={syncNotice}
+        syncing={syncing}
       />
     );
   }

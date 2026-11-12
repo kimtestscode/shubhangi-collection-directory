@@ -56,21 +56,27 @@ export async function POST(req: NextRequest) {
         .maybeSingle();
 
       if (existing) {
-        // Only update customer details if missing, without altering existing shipping/dispatch status
-        const updates: Record<string, unknown> = {};
-        if (!existing.customer_name && customerName) updates.customer_name = customerName;
-        if (!existing.customer_mobile && customerMobile) updates.customer_mobile = customerMobile;
-        if (!existing.customer_address && customerAddress) updates.customer_address = customerAddress;
-        if (!existing.customer_city && customerCity) updates.customer_city = customerCity;
-        if (!existing.customer_pincode && customerPincode) updates.customer_pincode = customerPincode;
-        if (!existing.printed_at) updates.printed_at = nowIso;
+        // Update customer details and refresh printed_at for this print session
+        const updates: Record<string, unknown> = {
+          printed_at: nowIso,
+        };
+        if (customerName) updates.customer_name = customerName;
+        if (customerMobile) updates.customer_mobile = customerMobile;
+        if (customerAddress) updates.customer_address = customerAddress;
+        if (customerCity) updates.customer_city = customerCity;
+        if (customerPincode) updates.customer_pincode = customerPincode;
 
-        if (Object.keys(updates).length > 0) {
-          await supabase.from('shipping_master').update(updates).eq('id', existing.id);
+        const { error: updateErr } = await supabase
+          .from('shipping_master')
+          .update(updates)
+          .eq('id', existing.id);
+
+        if (updateErr) {
+          console.error(`Failed to update existing order ${orderNo}:`, updateErr);
         }
       } else {
         // Insert new pending order
-        await supabase.from('shipping_master').insert({
+        const { error: insertErr } = await supabase.from('shipping_master').insert({
           order_number: orderNo,
           status: 'pending',
           customer_name: customerName,
@@ -82,6 +88,10 @@ export async function POST(req: NextRequest) {
           shipped_at: null,
           handed_to: null,
         });
+
+        if (insertErr) {
+          console.error(`Failed to insert order ${orderNo}:`, insertErr);
+        }
       }
       syncedCount++;
     }

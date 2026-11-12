@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { Order } from '@/lib/address-printer/order';
 import {
   ArrowLeft, Printer, Trash2, ArrowUp, ArrowDown, Edit3, Check, X,
-  AlertTriangle, AlertCircle, CheckCircle2, Filter, AlertOctagon
+  AlertTriangle, AlertCircle, CheckCircle2, Filter, AlertOctagon, Loader2
 } from 'lucide-react';
 
 interface Props {
@@ -14,6 +14,8 @@ interface Props {
   onOrdersChange: (orders: Order[]) => void;
   onProceedToPrint: () => void;
   onBack: () => void;
+  syncNotice?: string;
+  syncing?: boolean;
 }
 
 interface EditingState {
@@ -93,6 +95,8 @@ export default function ReviewScreen({
   onOrdersChange,
   onProceedToPrint,
   onBack,
+  syncNotice,
+  syncing,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditingState | null>(null);
@@ -269,13 +273,19 @@ export default function ReviewScreen({
                   {flaggedOrderIds.size} Need{flaggedOrderIds.size > 1 ? '' : 's'} Review
                 </span>
               )}
+              {syncNotice && (
+                <span className="text-emerald-700 font-semibold inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full text-xs animate-in fade-in">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  {syncNotice}
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-border-warm text-charcoal hover:bg-ivory-dark transition-colors font-medium"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-border-warm text-charcoal hover:bg-ivory-dark transition-colors font-medium cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
               Back
@@ -283,14 +293,14 @@ export default function ReviewScreen({
 
             <button
               onClick={handleProceed}
-              disabled={orders.length === 0}
-              className={`inline-flex items-center gap-2 px-5 py-2 text-xs sm:text-sm rounded-xl font-medium transition-all shadow-xs disabled:opacity-50 ${
+              disabled={orders.length === 0 || syncing}
+              className={`inline-flex items-center gap-2 px-5 py-2 text-xs sm:text-sm rounded-xl font-medium transition-all shadow-xs disabled:opacity-50 cursor-pointer ${
                 duplicateOrderNumbers.length > 0
                   ? 'bg-amber-600 hover:bg-amber-700 text-white'
                   : 'bg-gold hover:bg-gold/90 text-white'
               }`}
             >
-              <Printer className="w-4 h-4" />
+              {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
               <span>Generate Print Sheet →</span>
             </button>
           </div>

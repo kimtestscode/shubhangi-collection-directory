@@ -114,6 +114,24 @@ function isChatNoise(line: string): boolean {
   return CHAT_NOISE_RE.test(line.trim());
 }
 
+/**
+ * Heuristic: test if an unlabeled line looks like a person's name (e.g. directly after "To,").
+ */
+function looksLikePersonName(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > 60) return false;
+  if (/^[\d#\/\-]/.test(trimmed)) return false;
+  if (
+    /^(?:flat|room|shop|plot|house|block|building|bldg|sector|road|street|opp|near|behind|at\s*post|at\/post|via|dist|taluka|tq|addr|address|add)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+  const words = trimmed.split(/\s+/);
+  return words.length >= 1 && words.length <= 5;
+}
+
 // ─── split batch into raw order blocks ──────────────────────────────────────
 
 function splitIntoRawBlocks(text: string): { preamble: string; blocks: string[] } {
@@ -172,6 +190,7 @@ function parseOrderBlock(raw: string): Order {
 
   let currentField: FieldKey | null = null;
   let inFrom = false;
+  let sawToMarker = false;
   let fromLines: string[] = [];
   let addressLines: string[] = [];
   let unknownLines: string[] = [];
@@ -186,7 +205,10 @@ function parseOrderBlock(raw: string): Order {
     if (isChatNoise(line)) continue;
 
     // Skip "To," section-marker
-    if (/^to\s*,?\s*$/i.test(line)) continue;
+    if (/^to\s*,?\s*$/i.test(line)) {
+      sawToMarker = true;
+      continue;
+    }
 
     const detected = detectField(line);
 
@@ -200,6 +222,15 @@ function parseOrderBlock(raw: string): Order {
       fromLines.push(line);
       continue;
     }
+
+    // If we just saw "To," (or before any field is detected) and line has no label but looks like a name
+    if (!to.name && !detected && (sawToMarker || !currentField) && looksLikePersonName(line)) {
+      to.name = line;
+      currentField = 'name';
+      sawToMarker = false;
+      continue;
+    }
+    sawToMarker = false;
 
     if (detected) {
       currentField = detected;

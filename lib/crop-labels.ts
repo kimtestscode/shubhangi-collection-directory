@@ -40,40 +40,41 @@ function getLandscapeLabelBoxes(page: any): CropBox[] {
 }
 
 /**
- * Extracts the usable content bottom of a Shiprocket manifest page
+ * Extracts the usable content bottom of a specific Shiprocket manifest page
  * to strip out the large empty white space below the signatures and footer.
  */
-function getManifestContentBottom(buf: Uint8Array | Buffer): number {
-  let pos = 0;
+function getManifestContentBottom(page: any): number {
   let bottom = 380;
-  const s = Buffer.from(buf);
-
-  while (true) {
-    const streamStart = s.indexOf('stream', pos);
-    if (streamStart === -1) break;
-    const streamEnd = s.indexOf('endstream', streamStart);
-    if (streamEnd === -1) break;
-    let start = streamStart + 6;
-    if (s[start] === 13) start++;
-    if (s[start] === 10) start++;
-    const chunk = s.slice(start, streamEnd);
+  try {
+    const stream = page.node.Contents();
+    if (!stream) return bottom;
+    const bytes = stream.asUint8Array();
+    let txt = '';
     try {
-      const txt = zlib.inflateSync(chunk).toString('utf8');
-      if (txt.includes('MANIFEST')) {
-        const lines = txt.split('\n');
-        for (const l of lines) {
-          if (l.includes('This is a system generated document')) {
-            const m = l.match(/([0-9.-]+)\s+([0-9.-]+)\s+Td/);
-            if (m) {
-              return Math.max(300, parseFloat(m[2]) - 16);
-            }
-          }
+      txt = zlib.inflateSync(Buffer.from(bytes)).toString('utf8');
+    } catch {
+      txt = Buffer.from(bytes).toString('utf8');
+    }
+    const lines = txt.split('\n');
+    for (const l of lines) {
+      if (l.includes('This is a system generated document')) {
+        const m = l.match(/([0-9.-]+)\s+([0-9.-]+)\s+Td/);
+        if (m) {
+          return Math.max(250, parseFloat(m[2]) - 16);
         }
       }
-    } catch {
-      // ignore
     }
-    pos = streamEnd + 9;
+    // Fallback: FE Phone or FE Signature
+    for (const l of lines) {
+      if (l.includes('FE Phone:')) {
+        const m = l.match(/([0-9.-]+)\s+([0-9.-]+)\s+Td/);
+        if (m) {
+          return Math.max(250, parseFloat(m[2]) - 75);
+        }
+      }
+    }
+  } catch {
+    // ignore
   }
   return bottom;
 }
@@ -81,6 +82,7 @@ function getManifestContentBottom(buf: Uint8Array | Buffer): number {
 /**
  * Tiles Shiprocket pickup manifests efficiently on A4 pages.
  * Trims excessive blank bottom space, packing 2 to 3 manifests per A4 page without waste.
+ * Supports multiple single-page buffers OR a single multi-page combined manifest PDF.
  */
 export async function tileManifestPdfs(buffers: (Uint8Array | Buffer)[]): Promise<Uint8Array> {
   const outDoc = await PDFDocument.create();
@@ -100,7 +102,7 @@ export async function tileManifestPdfs(buffers: (Uint8Array | Buffer)[]): Promis
 
     for (let p = 0; p < count; p++) {
       const srcPage = srcDoc.getPage(p);
-      const bottom = getManifestContentBottom(buf);
+      const bottom = getManifestContentBottom(srcPage);
       const top = 810;
       const cropH = top - bottom;
       const cropW = A4_W;

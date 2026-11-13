@@ -31,7 +31,7 @@ export default function PrintCenterPage() {
   const tx = (en: string, mr: string) => (isMr ? mr : en);
 
   // Active sub-tab
-  const [activeTab, setActiveTab] = useState<'labels' | 'manifests' | 'cropper'>('labels');
+  const [activeTab, setActiveTab] = useState<'labels' | 'manifests' | 'cropper' | 'multi_manifest_cleaner'>('labels');
 
   // Shipping orders state
   const [entries, setEntries] = useState<ShippingEntry[]>([]);
@@ -56,6 +56,10 @@ export default function PrintCenterPage() {
   // Manifest combine upload state
   const [manifestFiles, setManifestFiles] = useState<File[]>([]);
   const [combiningManifests, setCombiningManifests] = useState(false);
+
+  // Single Multi-page Manifest Cleaner state (e.g. raw_15_Manifest.pdf)
+  const [singleManifestFile, setSingleManifestFile] = useState<File | null>(null);
+  const [cleaningSingleManifest, setCleaningSingleManifest] = useState(false);
 
   // Fetch entries
   const fetchEntries = async () => {
@@ -374,6 +378,65 @@ export default function PrintCenterPage() {
     }
   };
 
+  // Clean and remove white space from single multi-page manifest PDF (e.g. raw_15_Manifest.pdf)
+  const handleCleanSingleManifestPdf = async (fileToProcess?: File) => {
+    const targetFile = fileToProcess || singleManifestFile;
+    if (!targetFile) return;
+
+    setCleaningSingleManifest(true);
+    setUploadError(null);
+
+    try {
+      const reader = new FileReader();
+      const p = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const res = reader.result as string;
+          resolve(res.split(',')[1] || res);
+        };
+        reader.onerror = reject;
+      });
+      reader.readAsDataURL(targetFile);
+      const rawBase64 = await p;
+
+      const res = await fetch('/api/shipping/print-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'combine_uploaded_manifests',
+          raw_pdf_base64: rawBase64,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.pdf_base64) {
+        throw new Error(json.error || 'Failed to refine manifest PDF');
+      }
+
+      const byteChars = atob(json.pdf_base64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      setPdfPreviewUrl(blobUrl);
+      setPreviewModalOpen(true);
+
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `Refined_Manifest_Cleaned_A4_${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err: any) {
+      setUploadError(err.message || 'Failed to clean manifest white space');
+    } finally {
+      setCleaningSingleManifest(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-16">
       {/* Page Header */}
@@ -453,6 +516,19 @@ export default function PrintCenterPage() {
           >
             <Scissors className="w-4 h-4 text-gold" />
             <span>{tx('Upload & Crop PDF (Manual)', 'PDF अपलोड आणि क्रॉप')}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('multi_manifest_cleaner')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+              activeTab === 'multi_manifest_cleaner'
+                ? 'bg-charcoal text-white shadow-xs'
+                : 'bg-gold/15 text-charcoal hover:bg-gold/25 border border-gold/30'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-gold-dark" />
+            <span>{tx('Trim Manifest White Spaces (Single/Multi-Page)', 'मॅनिफेस्ट व्हाईट स्पेस कटर')}</span>
           </button>
         </div>
       </div>
@@ -909,6 +985,139 @@ export default function PrintCenterPage() {
                   ? tx('Combining Manifests…', 'एकत्र करत आहे…')
                   : tx(`Combine ${manifestFiles.length} Manifests to A4`, `${manifestFiles.length} मॅनिफेस्ट A4 पानात एकत्र करा`)}
               </button>
+            </div>
+          </div>
+
+          {/* Card 3: Downloaded Multi-Manifest Single PDF Cleaner (e.g. raw_15_Manifest.pdf) */}
+          <div className="md:col-span-2 bg-gradient-to-r from-amber-50/70 via-white to-amber-50/40 rounded-3xl p-6 sm:p-8 border border-amber-300 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold text-charcoal">
+                    {tx('Auto White Space Remover', 'पांढरी जागा कापणारे टूल')}
+                  </span>
+                  <span className="text-xs font-semibold text-charcoal-light">
+                    {tx('For downloads like raw_15_Manifest.pdf', 'उदा. raw_15_Manifest.pdf सारख्या फाइल्स')}
+                  </span>
+                </div>
+                <h3 className="font-serif text-lg font-bold text-charcoal">
+                  {tx('Downloaded All Manifests in a Single PDF? Cut White Space Instantly', 'Shiprocket वरून डाऊनलोड केलेल्या सिंगल एकत्रित PDF मधील पांढरी जागा काढा')}
+                </h3>
+                <p className="text-xs text-charcoal-light max-w-3xl">
+                  {tx(
+                    'When selecting multiple manifests on Shiprocket, it downloads 1 combined PDF where each manifest has lots of blank space at the bottom. Upload that single PDF here to automatically strip bottom white spaces and compress all manifests into fewer, compact A4 pages without wasting paper.',
+                    'Shiprocket वरून एकाच वेळी अनेक मॅनिफेस्ट निवडल्यास एकच PDF डाऊनलोड होते ज्याच्या प्रत्येक पानावर खाली खूप पांढरी जागा असते. ती फाईल येथे अपलोड केल्यास पांढरी जागा कापून सर्व मॅनिफेस्ट कमीत कमी A4 पानांमध्ये कॉम्पॅक्ट करून मिळतील.'
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <label className="block w-full border-2 border-dashed border-gold hover:border-gold-dark rounded-2xl p-6 text-center cursor-pointer bg-white hover:bg-gold/5 transition-all">
+              <Sparkles className="w-6 h-6 mx-auto mb-2 text-gold-dark" />
+              <span className="text-xs font-bold text-charcoal block">
+                {cleaningSingleManifest
+                  ? tx('Removing White Spaces & Re-packing A4 Pages…', 'पांढरी जागा काढून पाने कॉम्पॅक्ट करत आहे…')
+                  : tx('Upload Combined Manifest PDF (e.g. raw_15_Manifest.pdf)', 'एकत्रित मॅनिफेस्ट PDF येथे अपलोड करा (उदा. raw_15_Manifest.pdf)')}
+              </span>
+              <span className="text-[10px] text-charcoal-light mt-0.5 block">
+                {tx('Automatically detects signatures on every page, crops excess white space, and packs them tightly.', 'प्रत्येक पानाची स्वाक्षरी ओळखते, नको असलेली जागा काढून A4 पानात व्यवस्थित बसवते.')}
+              </span>
+              <input
+                type="file"
+                accept="application/pdf"
+                disabled={cleaningSingleManifest}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleCleanSingleManifestPdf(f);
+                }}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: DIRECT SINGLE / MULTI-PAGE MANIFEST WHITE SPACE CUTTER */}
+      {activeTab === 'multi_manifest_cleaner' && (
+        <div className="bg-white rounded-3xl p-6 sm:p-10 border border-amber-300 shadow-sm space-y-6">
+          <div className="max-w-3xl space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-gold text-charcoal shadow-2xs">
+                {tx('Dedicated Manifest White Space Remover', 'मॅनिफेस्ट पांढरी जागा कापणारे टूल')}
+              </span>
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800">
+                {tx('e.g. raw_15_Manifest.pdf', 'उदा. raw_15_Manifest.pdf')}
+              </span>
+            </div>
+            <h2 className="font-serif text-2xl font-bold text-charcoal">
+              {tx('Remove Blank Space from Downloaded Shiprocket Manifests', 'Shiprocket वरून डाऊनलोड केलेल्या मॅनिफेस्ट मधील पांढरी जागा काढा')}
+            </h2>
+            <p className="text-xs sm:text-sm text-charcoal-light leading-relaxed">
+              {tx(
+                'When you select multiple scheduled pickups in Shiprocket, it downloads a single PDF where each manifest has massive blank white space taking up a full A4 sheet. Upload that file right here — our engine automatically crops every manifest up to its signatures and combines them 2-3 per A4 sheet, eliminating paper waste completely.',
+                'Shiprocket डॅशबोर्डवर अनेक मॅनिफेस्ट एकदम डाऊनलोड केल्यास प्रत्येक पानावर खाली खूप पांढरी मोकळी जागा राहून पाने वाया जातात. ती एकच PDF फाईल येथे अपलोड करा — आमची सिस्टीम प्रत्येक मॅनिफेस्टची स्वाक्षरी ओळखून नको असलेला भाग कापते आणि २ ते ३ मॅनिफेस्ट एकाच A4 पानात व्यवस्थित बसवून नवीन फाईल तयार करते.'
+              )}
+            </p>
+          </div>
+
+          <div className="pt-2">
+            <label className="block w-full border-2 border-dashed border-gold hover:border-gold-dark rounded-3xl p-10 text-center cursor-pointer bg-ivory/40 hover:bg-gold/10 transition-all shadow-inner">
+              <div className="w-14 h-14 rounded-2xl bg-gold/20 text-gold-dark flex items-center justify-center mx-auto mb-3">
+                <Sparkles className="w-7 h-7 text-charcoal" />
+              </div>
+              <span className="text-base font-bold text-charcoal block">
+                {cleaningSingleManifest
+                  ? tx('Cutting White Spaces & Re-packing Pages…', 'पांढरी जागा काढून पाने तयार करत आहे…')
+                  : tx('Click or Drag & Drop Manifest PDF Here', 'मॅनिफेस्ट PDF येथे क्लिक करून किंवा ड्रॅग करून अपलोड करा')}
+              </span>
+              <span className="text-xs text-charcoal-light mt-1 block">
+                {tx('Supports any single or multi-page Shiprocket manifest PDF (e.g. raw_15_Manifest.pdf)', 'कोणतीही सिंगल किंवा मल्टि-पेज Shiprocket मॅनिफेस्ट PDF स्वीकारली जाईल')}
+              </span>
+              <span className="inline-block mt-3 px-4 py-1.5 rounded-xl bg-charcoal text-white text-xs font-semibold shadow-xs">
+                {tx('Select File', 'फाईल निवडा')}
+              </span>
+              <input
+                type="file"
+                accept="application/pdf"
+                disabled={cleaningSingleManifest}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleCleanSingleManifestPdf(f);
+                }}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-border-warm/60 text-xs">
+            <div className="p-4 rounded-2xl bg-ivory/60 border border-border-warm space-y-1">
+              <div className="font-bold text-charcoal flex items-center gap-1.5">
+                <Scissors className="w-4 h-4 text-gold" />
+                <span>{tx('1. Smart Signature Crop', '१. स्वाक्षरीनुसार कट')}</span>
+              </div>
+              <p className="text-charcoal-light text-[11px]">
+                {tx('Detects FE & Seller signatures, trimming only unused footer space.', 'फक्त नको असलेली मोकळी जागा काढून स्वाक्षरी सुरक्षित ठेवते.')}
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-ivory/60 border border-border-warm space-y-1">
+              <div className="font-bold text-charcoal flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-gold" />
+                <span>{tx('2. 2-to-3 per A4', '२. एका पानात २ ते ३')}</span>
+              </div>
+              <p className="text-charcoal-light text-[11px]">
+                {tx('Packs multiple courier manifests tightly onto standard A4 portrait sheets.', 'सर्व कुरिअरचे मॅनिफेस्ट सुटसुटीतपणे एकाच पानात बसवते.')}
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-ivory/60 border border-border-warm space-y-1">
+              <div className="font-bold text-charcoal flex items-center gap-1.5">
+                <Printer className="w-4 h-4 text-gold" />
+                <span>{tx('3. Zero Paper Waste', '३. कागद बचत')}</span>
+              </div>
+              <p className="text-charcoal-light text-[11px]">
+                {tx('Instant download & print-ready preview directly in the browser.', 'थेट ब्राऊझरमधून डाऊनलोड आणि प्रिंट करण्यासाठी तयार.')}
+              </p>
             </div>
           </div>
         </div>

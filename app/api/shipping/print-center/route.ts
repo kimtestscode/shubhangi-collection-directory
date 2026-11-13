@@ -73,6 +73,16 @@ export async function POST(req: NextRequest) {
 
     if (action === 'combine_uploaded_manifests') {
       const pdfs: string[] = body.manifest_pdfs_base64 || [];
+      if (raw_pdf_base64) {
+        // Single multi-page combined manifest PDF (e.g. raw_15_Manifest.pdf)
+        const rawBuffer = Buffer.from(raw_pdf_base64, 'base64');
+        const combined = await tileManifestPdfs([rawBuffer]);
+        return NextResponse.json({
+          success: true,
+          pdf_base64: Buffer.from(combined).toString('base64'),
+        });
+      }
+
       if (!Array.isArray(pdfs) || pdfs.length === 0) {
         return NextResponse.json({ error: 'No manifest PDFs provided' }, { status: 400 });
       }

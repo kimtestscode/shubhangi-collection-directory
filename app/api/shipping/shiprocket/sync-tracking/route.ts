@@ -121,3 +121,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err.message || 'Tracking sync failed' }, { status: 500 });
   }
 }
+

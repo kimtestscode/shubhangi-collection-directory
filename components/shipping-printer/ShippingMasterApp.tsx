@@ -159,6 +159,7 @@ export default function ShippingMasterApp() {
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerMobile, setEditCustomerMobile] = useState('');
   const [editCustomerAddress, setEditCustomerAddress] = useState('');
+  const [editCustomerPincode, setEditCustomerPincode] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
@@ -1022,6 +1023,7 @@ export default function ShippingMasterApp() {
     setEditCustomerName(entry.customer_name || '');
     setEditCustomerMobile(entry.customer_mobile || '');
     setEditCustomerAddress(entry.customer_address || '');
+    setEditCustomerPincode(entry.customer_pincode || '');
     if (entry.shipped_at) {
       const d = new Date(entry.shipped_at);
       const pad = (n: number) => String(n).padStart(2, '0');
@@ -1060,6 +1062,7 @@ export default function ShippingMasterApp() {
           customer_name: editCustomerName.trim() || null,
           customer_mobile: editCustomerMobile.trim() || null,
           customer_address: editCustomerAddress.trim() || null,
+          customer_pincode: editCustomerPincode.trim() || null,
         }),
       });
 
@@ -2896,6 +2899,30 @@ export default function ShippingMasterApp() {
                     onChange={(e) => setEditCustomerAddress(e.target.value)}
                     placeholder={tx('Full delivery address with landmark and city', 'संपूर्ण पत्ता, लँडमार्क व शहर')}
                     className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal resize-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-charcoal-light mb-1 flex items-center gap-1">
+                    {tx('Pincode', 'पिनकोड')}
+                    {!editCustomerPincode.trim() && (
+                      <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-red-200">
+                        {tx('Missing — required for Shiprocket', 'आवश्यक — Shiprocket साठी')}
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={editCustomerPincode}
+                    onChange={(e) => setEditCustomerPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="e.g. 421306"
+                    className={`w-full border rounded-xl px-3 py-1.5 text-xs bg-white font-mono focus:outline-none focus:border-gold text-charcoal ${
+                      !editCustomerPincode.trim()
+                        ? 'border-red-300 bg-red-50/40 focus:border-red-400'
+                        : 'border-border-warm'
+                    }`}
                   />
                 </div>
               </div>

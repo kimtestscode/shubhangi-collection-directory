@@ -343,6 +343,30 @@ export interface ShiprocketTrackingResult {
 }
 
 /**
+ * Generate a Shiprocket manifest PDF for the given shipment IDs.
+ * Returns the manifest PDF download URL.
+ */
+export async function generateShiprocketManifest(shipmentIds: number[]): Promise<string> {
+  const token = await getShiprocketToken();
+
+  const res = await fetch('https://apiv2.shiprocket.in/v1/external/manifests/generate', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ shipment_id: shipmentIds }),
+  });
+
+  const json = await res.json();
+  if (!res.ok || !json.manifest_url) {
+    throw new Error(json.message || `Manifest generation failed (HTTP ${res.status})`);
+  }
+
+  return json.manifest_url as string;
+}
+
+/**
  * Fetch real-time live tracking data for an AWB code from Shiprocket.
  */
 export async function trackShiprocketAWB(awbCode: string): Promise<ShiprocketTrackingResult | null> {

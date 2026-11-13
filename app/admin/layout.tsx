@@ -70,6 +70,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/address-printer', label: isMr ? 'पत्ता प्रिंटर' : 'Address Printer', icon: Printer },
     { href: '/admin/shipping-printer', label: isMr ? 'पत्ता प्रिंट + QR (Beta)' : 'Address Print + QR (Beta)', icon: QrCode },
     { href: '/admin/shipping-master', label: isMr ? 'शिपिंग मास्टर (Beta)' : 'Shipping Master (Beta)', icon: ScanLine },
+    { href: '/admin/print-center', label: isMr ? 'प्रिंट सेंटर (8-on-1)' : 'Print Center (8-on-1)', icon: Printer },
     { href: '/admin/users', label: isMr ? 'वापरकर्ते व परवानग्या' : 'Users & Permissions', icon: Users },
     { href: '/admin/help', label: isMr ? 'मदत व माहिती' : 'Help & Guide', icon: HelpCircle },
   ];

@@ -463,8 +463,8 @@ export function hasPageAccess(user: { role: string; permissions?: UserPermission
     return hasRight(perms, 'shipping_printer', 'view') || Boolean(perms?.address_printer);
   }
 
-  // /admin/shipping-master
-  if (pathname.startsWith('/admin/shipping-master')) {
+  // /admin/shipping-master & /admin/print-center
+  if (pathname.startsWith('/admin/shipping-master') || pathname.startsWith('/admin/print-center')) {
     return hasRight(perms, 'shipping_master', 'view') || Boolean(perms?.shipping_master);
   }
 

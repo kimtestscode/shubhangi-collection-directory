@@ -39,6 +39,8 @@ export interface ShippingEntry {
   whatsapp_sent: boolean;
   whatsapp_sent_at: string | null;
   notes: string | null;
+  shiprocket_shipment_id?: number | null;
+  shiprocket_order_id?: number | null;
   created_at: string;
 }
 

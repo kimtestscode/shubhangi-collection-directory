@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
             tracking_url: trackingUrl,
             shipped_at: nowIso,
             notes: `Shiprocket: ${courierName}`,
+            shiprocket_shipment_id: shipmentId,
           })
           .eq('order_number', orderNo);
 

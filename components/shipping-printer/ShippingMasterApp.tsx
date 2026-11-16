@@ -205,7 +205,7 @@ export default function ShippingMasterApp() {
   const [boxModalEntry, setBoxModalEntry] = useState<ShippingEntry | null>(null);
   const [boxModalSpecs, setBoxModalSpecs] = useState<PackageSpecs>(DEFAULT_PACKAGE_SPECS);
   const [bulkBoxModalOpen, setBulkBoxModalOpen] = useState(false);
-  const [bulkBoxPresetId, setBulkBoxPresetId] = useState<string>('medium');
+  const [bulkBoxPresetId, setBulkBoxPresetId] = useState<string>('standard');
   const [srRateRecalculating, setSrRateRecalculating] = useState<Record<string, boolean>>({});
   const [editPackageSpecs, setEditPackageSpecs] = useState<PackageSpecs>(DEFAULT_PACKAGE_SPECS);
 
@@ -601,7 +601,7 @@ export default function ShippingMasterApp() {
         customer_pincode: cleanPin || e.customer_pincode || '',
         weight_kg: pkg.weight_kg,
         dimensions_cm: { length: pkg.length, breadth: pkg.breadth, height: pkg.height },
-        box_preset: pkg.preset_id || 'medium',
+        box_preset: pkg.preset_id === 'medium' ? 'standard' : (pkg.preset_id || 'standard'),
         available_couriers: [] as any[],
         selected_courier: null as any,
         error: '',
@@ -679,7 +679,9 @@ export default function ShippingMasterApp() {
         weight_kg: customSpecs?.weight_kg ?? existing?.weight_kg ?? 0.2,
       };
     } else {
-      const foundPreset = BOX_PRESETS.find((p) => p.id === presetId) || BOX_PRESETS[1];
+      const foundPreset =
+        BOX_PRESETS.find((p) => p.id === presetId || (presetId === 'medium' && p.id === 'standard')) ||
+        BOX_PRESETS[0];
       newSpecs = {
         preset_id: foundPreset.id,
         length: foundPreset.length,
@@ -2539,7 +2541,7 @@ export default function ShippingMasterApp() {
                 type="button"
                 disabled={bulkBusy}
                 onClick={() => {
-                  setBulkBoxPresetId('medium');
+                  setBulkBoxPresetId('standard');
                   setBulkBoxModalOpen(true);
                 }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
@@ -2922,7 +2924,9 @@ export default function ShippingMasterApp() {
                       <td className="px-4 sm:px-5 py-3.5 align-top whitespace-nowrap">
                         {(() => {
                           const pkg = getOrderPackageSpecs(e);
-                          const preset = BOX_PRESETS.find((p) => p.id === pkg.preset_id);
+                          const preset = BOX_PRESETS.find(
+                            (p) => p.id === pkg.preset_id || (pkg.preset_id === 'medium' && p.id === 'standard')
+                          );
                           return (
                             <div className="space-y-1">
                               <button
@@ -3331,7 +3335,7 @@ export default function ShippingMasterApp() {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {BOX_PRESETS.map((p) => {
                     const isSel = editPackageSpecs.preset_id === p.id;
                     return (
@@ -3577,8 +3581,8 @@ export default function ShippingMasterApp() {
                 )}
               </div>
 
-              {/* 4 Presets Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* 3 Presets Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {BOX_PRESETS.map((p) => {
                   const isSel = boxModalSpecs.preset_id === p.id;
                   return (
@@ -3763,7 +3767,7 @@ export default function ShippingMasterApp() {
 
             {/* Body */}
             <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 {BOX_PRESETS.map((p) => {
                   const isSel = bulkBoxPresetId === p.id;
                   return (
@@ -3806,7 +3810,10 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 onClick={() => {
-                  const foundPreset = BOX_PRESETS.find((p) => p.id === bulkBoxPresetId) || BOX_PRESETS[1];
+                  const foundPreset =
+                    BOX_PRESETS.find(
+                      (p) => p.id === bulkBoxPresetId || (bulkBoxPresetId === 'medium' && p.id === 'standard')
+                    ) || BOX_PRESETS[0];
                   const targetSpecs: PackageSpecs = {
                     preset_id: foundPreset.id,
                     length: foundPreset.length,
@@ -4410,7 +4417,11 @@ export default function ShippingMasterApp() {
                             <td className="py-2.5 px-3 min-w-[170px]">
                               <div className="space-y-1.5">
                                 <select
-                                  value={ord.box_preset || 'medium'}
+                                  value={
+                                    ord.box_preset === 'medium'
+                                      ? 'standard'
+                                      : ord.box_preset || 'standard'
+                                  }
                                   onChange={(e) =>
                                     handleUpdateOrderBoxInShiprocketModal(
                                       ord.order_number,

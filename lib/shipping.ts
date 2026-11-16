@@ -390,7 +390,7 @@ export function getTimeElapsed(iso: string | null | undefined): { text: string; 
 // ─── Package Dimensions & Weight Presets ──────────────────────────────────────
 
 export interface PackageSpecs {
-  preset_id?: 'small' | 'medium' | 'large' | 'xl' | 'custom';
+  preset_id?: 'standard' | 'bit_big' | 'long_bit_big' | 'custom' | string;
   length: number;
   breadth: number;
   height: number;
@@ -398,7 +398,7 @@ export interface PackageSpecs {
 }
 
 export interface BoxPreset {
-  id: 'small' | 'medium' | 'large' | 'xl';
+  id: 'standard' | 'bit_big' | 'long_bit_big' | string;
   name: string;
   nameMr: string;
   desc: string;
@@ -411,21 +411,10 @@ export interface BoxPreset {
 
 export const BOX_PRESETS: BoxPreset[] = [
   {
-    id: 'small',
-    name: 'Small Box / Pouch',
-    nameMr: 'लहान बॉक्स / पाऊच',
-    desc: 'Earrings, Rings, Single item',
-    length: 15,
-    breadth: 10,
-    height: 3,
-    weight_kg: 0.15,
-    tag: '15×10×3 · 150g',
-  },
-  {
-    id: 'medium',
-    name: 'Standard Box (Default)',
-    nameMr: 'मध्यम बॉक्स (डिफॉल्ट)',
-    desc: 'Necklaces, Bangles, Standard sets',
+    id: 'standard',
+    name: 'Standard',
+    nameMr: 'स्टँडर्ड बॉक्स (डिफॉल्ट)',
+    desc: '18 × 12 × 4 cm · Standard Jewelry Box',
     length: 18,
     breadth: 12,
     height: 4,
@@ -433,31 +422,31 @@ export const BOX_PRESETS: BoxPreset[] = [
     tag: '18×12×4 · 200g',
   },
   {
-    id: 'large',
-    name: 'Large / Combo Box',
-    nameMr: 'मोठा कॉम्बो बॉक्स',
-    desc: 'Bridal sets, Heavy jewelry, 2-3 items',
-    length: 24,
-    breadth: 18,
-    height: 6,
-    weight_kg: 0.5,
-    tag: '24×18×6 · 500g',
+    id: 'bit_big',
+    name: 'Bit Big',
+    nameMr: 'बिट बिग (23×12×4)',
+    desc: '23 × 12 × 4 cm · Medium/Combo Jewelry Box',
+    length: 23,
+    breadth: 12,
+    height: 4,
+    weight_kg: 0.3,
+    tag: '23×12×4 · 300g',
   },
   {
-    id: 'xl',
-    name: 'XL / Heavy Bulk Box',
-    nameMr: 'मोठा हेवी बॉक्स',
-    desc: 'Bulk orders, multiple gift hampers',
-    length: 30,
-    breadth: 20,
-    height: 10,
-    weight_kg: 1.0,
-    tag: '30×20×10 · 1.0kg',
+    id: 'long_bit_big',
+    name: 'Long Bit Big',
+    nameMr: 'लांब बॉक्स (33×8×4)',
+    desc: '33 × 8 × 4 cm · Long Necklace/Set Box',
+    length: 33,
+    breadth: 8,
+    height: 4,
+    weight_kg: 0.3,
+    tag: '33×8×4 · 300g',
   },
 ];
 
 export const DEFAULT_PACKAGE_SPECS: PackageSpecs = {
-  preset_id: 'medium',
+  preset_id: 'standard',
   length: 18,
   breadth: 12,
   height: 4,

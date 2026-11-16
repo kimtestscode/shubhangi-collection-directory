@@ -7,14 +7,15 @@ import {
   AlertTriangle, XCircle, Loader2, PackageCheck, CalendarDays, Calendar, Printer, Truck,
   ExternalLink, MessageCircle, Upload, Image as ImageIcon, Clock, Edit3, Check,
   X, ChevronDown, Sparkles, AlertCircle, RefreshCw, CheckSquare, Square, Layers, Eraser, Scissors,
-  Rocket, FileText, CheckCheck, Wallet, ClipboardList
+  Rocket, FileText, CheckCheck, Wallet, ClipboardList, Box, Scale
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import {
   ShippingEntry, ShippingStatus, CourierPartner, COURIER_META,
   formatShippedAt, istDateKey, getTimeElapsed, getWhatsAppUrl,
   cleanMobileNumber, buildWhatsAppTrackingMessage,
-  resolveCourierMeta, getShippingStatusMeta
+  resolveCourierMeta, getShippingStatusMeta,
+  PackageSpecs, BoxPreset, BOX_PRESETS, DEFAULT_PACKAGE_SPECS, parsePackageSpecs
 } from '@/lib/shipping';
 import { Order } from '@/lib/address-printer/order';
 import ShippingPrintPreview from './ShippingPrintPreview';
@@ -199,6 +200,15 @@ export default function ShippingMasterApp() {
   // Manifest Generation State
   const [manifestBusy, setManifestBusy] = useState(false);
 
+  // Order Package Dimensions & Weight State
+  const [packagesMap, setPackagesMap] = useState<Record<string, PackageSpecs>>({});
+  const [boxModalEntry, setBoxModalEntry] = useState<ShippingEntry | null>(null);
+  const [boxModalSpecs, setBoxModalSpecs] = useState<PackageSpecs>(DEFAULT_PACKAGE_SPECS);
+  const [bulkBoxModalOpen, setBulkBoxModalOpen] = useState(false);
+  const [bulkBoxPresetId, setBulkBoxPresetId] = useState<string>('medium');
+  const [srRateRecalculating, setSrRateRecalculating] = useState<Record<string, boolean>>({});
+  const [editPackageSpecs, setEditPackageSpecs] = useState<PackageSpecs>(DEFAULT_PACKAGE_SPECS);
+
   // Batch Multi-Scan Input State
   const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
   const [batchOrdersText, setBatchOrdersText] = useState('');
@@ -241,6 +251,36 @@ export default function ShippingMasterApp() {
     handedToRef.current = handedTo;
     try { localStorage.setItem(HANDED_TO_KEY, handedTo); } catch { /* ignore */ }
   }, [handedTo]);
+
+  // Load saved packages from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sc_shipping_packages');
+      if (saved) {
+        setPackagesMap(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  const updateOrderPackage = useCallback((orderNumber: string, specs: PackageSpecs) => {
+    setPackagesMap((prev) => {
+      const next = { ...prev, [orderNumber]: specs };
+      try {
+        localStorage.setItem('sc_shipping_packages', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const getOrderPackageSpecs = useCallback(
+    (e: { order_number: string; notes?: string | null }): PackageSpecs => {
+      if (packagesMap[e.order_number]) return packagesMap[e.order_number];
+      const fromNote = parsePackageSpecs(e.notes);
+      if (fromNote) return fromNote;
+      return DEFAULT_PACKAGE_SPECS;
+    },
+    [packagesMap]
+  );
 
   // ─── record a scan ────────────────────────────────────────────────────────
   const submitOrder = useCallback(async (raw: string) => {
@@ -551,6 +591,7 @@ export default function ShippingMasterApp() {
 
     const initialOrders = selectedEntries.map((e) => {
       const cleanPin = (e.customer_pincode || '').replace(/\D/g, '').slice(-6);
+      const pkg = getOrderPackageSpecs(e);
       return {
         order_number: e.order_number,
         customer_name: e.customer_name || 'Customer',
@@ -558,7 +599,9 @@ export default function ShippingMasterApp() {
         customer_address: e.customer_address || '',
         customer_city: e.customer_city || '',
         customer_pincode: cleanPin || e.customer_pincode || '',
-        weight_kg: 0.2,
+        weight_kg: pkg.weight_kg,
+        dimensions_cm: { length: pkg.length, breadth: pkg.breadth, height: pkg.height },
+        box_preset: pkg.preset_id || 'medium',
         available_couriers: [] as any[],
         selected_courier: null as any,
         error: '',
@@ -575,6 +618,7 @@ export default function ShippingMasterApp() {
             order_number: o.order_number,
             customer_pincode: o.customer_pincode,
             weight_kg: o.weight_kg,
+            dimensions_cm: o.dimensions_cm,
           })),
         }),
       });
@@ -619,6 +663,101 @@ export default function ShippingMasterApp() {
     );
   }
 
+  async function handleUpdateOrderBoxInShiprocketModal(
+    orderNumber: string,
+    presetId: string,
+    customSpecs?: Partial<PackageSpecs>
+  ) {
+    let newSpecs: PackageSpecs;
+    if (presetId === 'custom') {
+      const existing = srOrders.find((o) => o.order_number === orderNumber);
+      newSpecs = {
+        preset_id: 'custom',
+        length: customSpecs?.length ?? existing?.dimensions_cm?.length ?? 18,
+        breadth: customSpecs?.breadth ?? existing?.dimensions_cm?.breadth ?? 12,
+        height: customSpecs?.height ?? existing?.dimensions_cm?.height ?? 4,
+        weight_kg: customSpecs?.weight_kg ?? existing?.weight_kg ?? 0.2,
+      };
+    } else {
+      const foundPreset = BOX_PRESETS.find((p) => p.id === presetId) || BOX_PRESETS[1];
+      newSpecs = {
+        preset_id: foundPreset.id,
+        length: foundPreset.length,
+        breadth: foundPreset.breadth,
+        height: foundPreset.height,
+        weight_kg: customSpecs?.weight_kg ?? foundPreset.weight_kg,
+      };
+    }
+
+    updateOrderPackage(orderNumber, newSpecs);
+
+    // Update srOrders state with new package dimensions and weight
+    setSrOrders((prev) =>
+      prev.map((o) => {
+        if (o.order_number !== orderNumber) return o;
+        return {
+          ...o,
+          weight_kg: newSpecs.weight_kg,
+          dimensions_cm: {
+            length: newSpecs.length,
+            breadth: newSpecs.breadth,
+            height: newSpecs.height,
+          },
+          box_preset: newSpecs.preset_id,
+        };
+      })
+    );
+
+    // Re-check rate dynamically for this single order
+    const targetOrder = srOrders.find((o) => o.order_number === orderNumber);
+    if (!targetOrder || !targetOrder.customer_pincode) return;
+
+    setSrRateRecalculating((prev) => ({ ...prev, [orderNumber]: true }));
+    try {
+      const res = await fetch('/api/shipping/shiprocket/check-rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orders: [
+            {
+              order_number: orderNumber,
+              customer_pincode: targetOrder.customer_pincode,
+              weight_kg: newSpecs.weight_kg,
+              dimensions_cm: {
+                length: newSpecs.length,
+                breadth: newSpecs.breadth,
+                height: newSpecs.height,
+              },
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.results && data.results[0]) {
+        const rateInfo = data.results[0];
+        setSrOrders((prev) =>
+          prev.map((o) => {
+            if (o.order_number !== orderNumber) return o;
+            const prevId = o.selected_courier?.courier_company_id;
+            const reMatched = rateInfo.available_couriers?.find(
+              (c: any) => c.courier_company_id === prevId
+            );
+            return {
+              ...o,
+              available_couriers: rateInfo.available_couriers || [],
+              selected_courier: reMatched || rateInfo.selected_courier || null,
+              error: rateInfo.error || '',
+            };
+          })
+        );
+      }
+    } catch (e) {
+      console.error('Rate re-check failed:', e);
+    } finally {
+      setSrRateRecalculating((prev) => ({ ...prev, [orderNumber]: false }));
+    }
+  }
+
   function handleBulkSetCourierPreference(type: 'delhivery' | 'cheapest') {
     setSrOrders((prev) =>
       prev.map((o) => {
@@ -658,6 +797,7 @@ export default function ShippingMasterApp() {
             courier_company_id: o.selected_courier.courier_company_id,
             declared_value: 299,
             weight_kg: o.weight_kg || 0.2,
+            dimensions_cm: o.dimensions_cm || { length: 18, breadth: 12, height: 4 },
           })),
         }),
       });
@@ -1037,6 +1177,8 @@ export default function ShippingMasterApp() {
     }
 
     setEditCustomerPincode(entry.customer_pincode || '');
+    const pkg = getOrderPackageSpecs(entry);
+    setEditPackageSpecs(pkg);
     if (entry.shipped_at) {
       const d = new Date(entry.shipped_at);
       const pad = (n: number) => String(n).padStart(2, '0');
@@ -1096,6 +1238,9 @@ export default function ShippingMasterApp() {
       if (!res.ok) throw new Error(updated.error || 'Failed to update tracking');
 
       setEntries((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      if (editingEntry) {
+        updateOrderPackage(editingEntry.order_number, editPackageSpecs);
+      }
       setEditingEntry(null);
       beep(880, 80);
     } catch (e) {
@@ -1531,6 +1676,9 @@ export default function ShippingMasterApp() {
         'Pincode',
         'Courier Partner',
         'Docket / Tracking No',
+        'Box Preset',
+        'Dimensions (cm)',
+        'Weight (kg)',
         'Shipping Cost (₹)',
         'Tracking URL',
         'Shipped / Pickup At',
@@ -1546,6 +1694,7 @@ export default function ShippingMasterApp() {
         const extracted = e.notes.replace(/.*Shiprocket:\s*/i, '').split('|')[0].trim();
         if (extracted) courierName = extracted;
       }
+      const pkg = getOrderPackageSpecs(e);
       rows.push([
         e.order_number,
         e.status || 'pending',
@@ -1555,6 +1704,9 @@ export default function ShippingMasterApp() {
         e.customer_pincode ?? '',
         courierName,
         e.tracking_number ?? '',
+        pkg.preset_id || 'medium',
+        `${pkg.length}x${pkg.breadth}x${pkg.height}`,
+        String(pkg.weight_kg),
         e.shipping_cost ? `₹${e.shipping_cost}` : '',
         e.tracking_url ?? '',
         e.shipped_at ? formatShippedAt(e.shipped_at) : '',
@@ -2386,6 +2538,20 @@ export default function ShippingMasterApp() {
               <button
                 type="button"
                 disabled={bulkBusy}
+                onClick={() => {
+                  setBulkBoxPresetId('medium');
+                  setBulkBoxModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                title={tx('Batch assign box preset and weight to all selected orders', 'सर्व निवडलेल्या ऑर्डर्ससाठी बॉक्स आणि वजन एकत्र बदला')}
+              >
+                <Box className="w-3.5 h-3.5 text-white" />
+                <span>{tx('Set Box & Weight', 'बॉक्स व वजन बदला')}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={bulkBusy}
                 onClick={() => openHandoverModal(selectedIds)}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-xs disabled:opacity-50 cursor-pointer"
                 title={tx('Mark selected parcels as Handed to Courier / Out for Delivery with exact timestamp', 'निवडलेली पार्सल्स कुरिअरकडे दिल्याचा अचूक दिनांक व वेळ नोंदवा')}
@@ -2471,13 +2637,13 @@ export default function ShippingMasterApp() {
                       className="rounded border-border-warm text-gold focus:ring-gold cursor-pointer"
                     />
                   </th>
-                  <th className="px-4 py-3 font-semibold">{tx('Order No', 'ऑर्डर नं.')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('Customer & Address', 'ग्राहक आणि पत्ता')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('Status & Timing', 'स्थिती आणि वेळ')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('Courier & Docket', 'कुरिअर आणि डॉकेट')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('Cost (₹)', 'खर्च (₹)')}</th>
-                  <th className="px-4 py-3 font-semibold">{tx('WhatsApp Tracking', 'व्हॉट्सॲप ट्रॅकिंग')}</th>
-                  <th className="px-3 py-3 text-right">{tx('Actions', 'कृती')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold">{tx('Order No', 'ऑर्डर नं.')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold">{tx('Customer & Address', 'ग्राहक आणि पत्ता')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold">{tx('Status & Timing', 'स्थिती आणि वेळ')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold">{tx('Courier & Docket', 'कुरिअर आणि डॉकेट')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold min-w-[160px]">{tx('Package & Weight', 'पॅकेज व वजन')}</th>
+                  <th className="px-4 sm:px-5 py-3.5 font-semibold">{tx('WhatsApp Tracking', 'व्हॉट्सॲप ट्रॅकिंग')}</th>
+                  <th className="px-3 sm:px-4 py-3.5 text-right">{tx('Actions', 'कृती')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-warm/80">
@@ -2752,15 +2918,39 @@ export default function ShippingMasterApp() {
                         </div>
                       </td>
 
-                      {/* Shipping Cost */}
-                      <td className="px-4 py-3 align-top whitespace-nowrap">
-                        {e.shipping_cost ? (
-                          <div className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-xl inline-block text-xs">
-                            ₹{e.shipping_cost}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-charcoal-light/50 italic">—</span>
-                        )}
+                      {/* Package Box & Weight */}
+                      <td className="px-4 sm:px-5 py-3.5 align-top whitespace-nowrap">
+                        {(() => {
+                          const pkg = getOrderPackageSpecs(e);
+                          const preset = BOX_PRESETS.find((p) => p.id === pkg.preset_id);
+                          return (
+                            <div className="space-y-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setBoxModalEntry(e);
+                                  setBoxModalSpecs(pkg);
+                                }}
+                                className="group inline-flex flex-col text-left px-3 py-1.5 rounded-xl border border-border-warm bg-white hover:border-gold hover:bg-gold/5 hover:shadow-xs transition-all cursor-pointer"
+                                title={tx('Click to edit parcel dimensions & weight', 'बॉक्स साईज किंवा वजन बदलण्यासाठी क्लिक करा')}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <Box className="w-3.5 h-3.5 text-gold-dark group-hover:scale-110 transition-transform flex-shrink-0" />
+                                  <span className="font-bold text-xs text-charcoal">
+                                    {preset ? tx(preset.name, preset.nameMr) : tx('Custom Box', 'कस्टम बॉक्स')}
+                                  </span>
+                                  <Edit3 className="w-2.5 h-2.5 text-charcoal-light/40 group-hover:text-gold transition-colors ml-0.5" />
+                                </div>
+                                <div className="flex items-center gap-2 mt-1 text-[11px] font-mono text-charcoal-light">
+                                  <span className="font-semibold text-charcoal/80">{pkg.length}×{pkg.breadth}×{pkg.height} cm</span>
+                                  <span className="font-bold text-amber-900 bg-amber-100/80 px-1.5 py-0.2 rounded border border-amber-200/80">
+                                    {pkg.weight_kg >= 1 ? `${pkg.weight_kg} kg` : `${Math.round(pkg.weight_kg * 1000)}g`}
+                                  </span>
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* 1-Click WhatsApp Button */}
@@ -3129,6 +3319,118 @@ export default function ShippingMasterApp() {
                 </div>
               )}
 
+              {/* Package Dimensions & Weight */}
+              <div className="p-3.5 rounded-2xl bg-ivory/60 border border-border-warm space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 font-bold text-xs text-charcoal uppercase tracking-wider">
+                    <Box className="w-3.5 h-3.5 text-gold" />
+                    <span>{tx('Package Box & Weight', 'पॅकेज बॉक्स आणि वजन')}</span>
+                  </div>
+                  <span className="text-[10px] text-charcoal-light">
+                    {tx('Used for Shiprocket rate & booking', 'शिपरोकेट बुकिंग व दरांसाठी')}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  {BOX_PRESETS.map((p) => {
+                    const isSel = editPackageSpecs.preset_id === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() =>
+                          setEditPackageSpecs({
+                            preset_id: p.id,
+                            length: p.length,
+                            breadth: p.breadth,
+                            height: p.height,
+                            weight_kg: p.weight_kg,
+                          })
+                        }
+                        className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
+                          isSel
+                            ? 'bg-gold/15 border-gold text-charcoal shadow-xs'
+                            : 'bg-white border-border-warm text-charcoal-light hover:border-gold/50'
+                        }`}
+                      >
+                        <div className="font-bold text-xs text-charcoal">{tx(p.name, p.nameMr)}</div>
+                        <div className="text-[10px] font-mono text-charcoal-light mt-0.5">
+                          {p.length}×{p.breadth}×{p.height} cm · {p.weight_kg >= 1 ? `${p.weight_kg}kg` : `${Math.round(p.weight_kg * 1000)}g`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-4 gap-2 pt-1 border-t border-border-warm/60">
+                  <div>
+                    <label className="text-[10px] font-bold text-charcoal-light block mb-0.5">L (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editPackageSpecs.length}
+                      onChange={(e) =>
+                        setEditPackageSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          length: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-bold border border-border-warm rounded-lg bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-charcoal-light block mb-0.5">B (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editPackageSpecs.breadth}
+                      onChange={(e) =>
+                        setEditPackageSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          breadth: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-bold border border-border-warm rounded-lg bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-charcoal-light block mb-0.5">H (cm)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={editPackageSpecs.height}
+                      onChange={(e) =>
+                        setEditPackageSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          height: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-bold border border-border-warm rounded-lg bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-charcoal-light block mb-0.5">Wt (kg)</label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.05"
+                      value={editPackageSpecs.weight_kg}
+                      onChange={(e) =>
+                        setEditPackageSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          weight_kg: Number(e.target.value) || 0.2,
+                        }))
+                      }
+                      className="w-full px-2 py-1 text-xs font-mono font-bold border border-border-warm rounded-lg bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Shipping Cost (₹) Charged */}
               <div>
                 <label htmlFor="edit-cost" className="block font-semibold text-charcoal mb-1.5">
@@ -3233,6 +3535,295 @@ export default function ShippingMasterApp() {
                   <span>{tx('Save & Update', 'सेव्ह करा')}</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Box & Weight Modal */}
+      {boxModalEntry && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-gold/20 flex items-center justify-center text-gold-dark">
+                  <Box className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-bold text-charcoal">
+                    {tx('Package Box & Weight', 'पॅकेज बॉक्स आणि वजन')}
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    Order #{boxModalEntry.order_number} · {boxModalEntry.customer_name || 'Customer'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBoxModalEntry(null)}
+                className="p-1.5 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm">
+              <div className="text-xs text-charcoal-light">
+                {tx(
+                  'Choose a standard box preset or enter custom dimensions. This weight and box size is sent to Shiprocket for exact volumetric weight & courier freight calculations.',
+                  'स्टँडर्ड बॉक्स निवडा किंवा स्वतः साईज टाका. शिपरोकेट अचूक कुरिअर खर्च काढण्यासाठी ही माहिती वापरेल.'
+                )}
+              </div>
+
+              {/* 4 Presets Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {BOX_PRESETS.map((p) => {
+                  const isSel = boxModalSpecs.preset_id === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        setBoxModalSpecs({
+                          preset_id: p.id,
+                          length: p.length,
+                          breadth: p.breadth,
+                          height: p.height,
+                          weight_kg: p.weight_kg,
+                        })
+                      }
+                      className={`p-3 rounded-2xl text-left border transition-all cursor-pointer relative ${
+                        isSel
+                          ? 'bg-gold/15 border-gold ring-2 ring-gold/30 shadow-xs'
+                          : 'bg-ivory/30 border-border-warm hover:border-gold/50 hover:bg-ivory'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-charcoal">{tx(p.name, p.nameMr)}</span>
+                        {isSel && <Check className="w-4 h-4 text-gold-dark" />}
+                      </div>
+                      <div className="text-[11px] text-charcoal-light/80 mt-0.5">{p.desc}</div>
+                      <div className="mt-2 flex items-center justify-between text-xs font-mono font-semibold">
+                        <span className="text-charcoal">{p.length} × {p.breadth} × {p.height} cm</span>
+                        <span className="text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {p.weight_kg >= 1 ? `${p.weight_kg} kg` : `${Math.round(p.weight_kg * 1000)}g`}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Dimensions Section */}
+              <div className="p-3.5 rounded-2xl bg-ivory/50 border border-border-warm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-xs text-charcoal">
+                    {tx('Custom Dimensions & Weight', 'कस्टम परिमाणे व वजन')}
+                  </span>
+                  <span className="text-[10px] text-charcoal-light font-mono">
+                    Volumetric: {((boxModalSpecs.length * boxModalSpecs.breadth * boxModalSpecs.height) / 5000).toFixed(2)} kg
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
+                      Length (cm)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={boxModalSpecs.length}
+                      onChange={(e) =>
+                        setBoxModalSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          length: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold border border-border-warm rounded-xl bg-white focus:outline-none focus:border-gold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
+                      Breadth (cm)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={boxModalSpecs.breadth}
+                      onChange={(e) =>
+                        setBoxModalSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          breadth: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold border border-border-warm rounded-xl bg-white focus:outline-none focus:border-gold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
+                      Height (cm)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={boxModalSpecs.height}
+                      onChange={(e) =>
+                        setBoxModalSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          height: Number(e.target.value) || 1,
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold border border-border-warm rounded-xl bg-white focus:outline-none focus:border-gold"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-charcoal-light block mb-1">
+                      Weight (kg)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.05"
+                      value={boxModalSpecs.weight_kg}
+                      onChange={(e) =>
+                        setBoxModalSpecs((prev) => ({
+                          ...prev,
+                          preset_id: 'custom',
+                          weight_kg: Number(e.target.value) || 0.2,
+                        }))
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono font-bold border border-border-warm rounded-xl bg-white focus:outline-none focus:border-gold"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2.5 p-4 sm:p-5 border-t border-border-warm bg-ivory/20">
+              <button
+                type="button"
+                onClick={() => setBoxModalEntry(null)}
+                className="px-4 py-2 rounded-xl border border-border-warm text-xs font-semibold text-charcoal hover:bg-white"
+              >
+                {tx('Cancel', 'रद्द करा')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (boxModalEntry) {
+                    updateOrderPackage(boxModalEntry.order_number, boxModalSpecs);
+                    setBoxModalEntry(null);
+                  }
+                }}
+                className="px-5 py-2 rounded-xl bg-gold hover:bg-gold-light text-charcoal text-xs font-bold shadow-xs cursor-pointer"
+              >
+                {tx('Save & Apply', 'जतन करा')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Set Box & Weight Modal */}
+      {bulkBoxModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full border border-border-warm shadow-2xl my-auto flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border-warm p-4 sm:p-5 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-gold/20 flex items-center justify-center text-gold-dark">
+                  <Box className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-lg font-bold text-charcoal">
+                    {tx('Batch Set Box & Weight', 'पॅकेज बॉक्स आणि वजन एकत्र बदला')}
+                  </h3>
+                  <p className="text-xs text-charcoal-light">
+                    {tx(
+                      `Applying to ${selectedIds.length} selected orders`,
+                      `निवडलेल्या ${selectedIds.length} ऑर्डर्सवर लागू होईल`
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkBoxModalOpen(false)}
+                className="p-1.5 rounded-lg text-charcoal-light hover:text-charcoal hover:bg-ivory cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 sm:p-6 space-y-4 text-xs sm:text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {BOX_PRESETS.map((p) => {
+                  const isSel = bulkBoxPresetId === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setBulkBoxPresetId(p.id)}
+                      className={`p-3 rounded-2xl text-left border transition-all cursor-pointer ${
+                        isSel
+                          ? 'bg-gold/15 border-gold ring-2 ring-gold/30 shadow-xs'
+                          : 'bg-ivory/30 border-border-warm hover:border-gold/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-charcoal">{tx(p.name, p.nameMr)}</span>
+                        {isSel && <Check className="w-4 h-4 text-gold-dark" />}
+                      </div>
+                      <div className="text-[11px] text-charcoal-light/80 mt-0.5">{p.desc}</div>
+                      <div className="mt-2 flex items-center justify-between text-xs font-mono font-semibold">
+                        <span className="text-charcoal">{p.length} × {p.breadth} × {p.height} cm</span>
+                        <span className="text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {p.weight_kg >= 1 ? `${p.weight_kg} kg` : `${Math.round(p.weight_kg * 1000)}g`}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2.5 p-4 sm:p-5 border-t border-border-warm bg-ivory/20">
+              <button
+                type="button"
+                onClick={() => setBulkBoxModalOpen(false)}
+                className="px-4 py-2 rounded-xl border border-border-warm text-xs font-semibold text-charcoal hover:bg-white"
+              >
+                {tx('Cancel', 'रद्द करा')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const foundPreset = BOX_PRESETS.find((p) => p.id === bulkBoxPresetId) || BOX_PRESETS[1];
+                  const targetSpecs: PackageSpecs = {
+                    preset_id: foundPreset.id,
+                    length: foundPreset.length,
+                    breadth: foundPreset.breadth,
+                    height: foundPreset.height,
+                    weight_kg: foundPreset.weight_kg,
+                  };
+                  const selectedEntries = entries.filter((e) => selectedIds.includes(e.id));
+                  selectedEntries.forEach((e) => {
+                    updateOrderPackage(e.order_number, targetSpecs);
+                  });
+                  setBulkBoxModalOpen(false);
+                }}
+                className="px-5 py-2 rounded-xl bg-gold hover:bg-gold-light text-charcoal text-xs font-bold shadow-xs cursor-pointer"
+              >
+                {tx(`Apply to ${selectedIds.length} Orders`, `${selectedIds.length} ऑर्डर्सवर लागू करा`)}
+              </button>
             </div>
           </div>
         </div>
@@ -3777,8 +4368,9 @@ export default function ShippingMasterApp() {
                       <thead className="bg-ivory text-charcoal font-semibold border-b border-border-warm sticky top-0 z-10">
                         <tr>
                           <th className="py-2.5 px-3 w-16">Order #</th>
-                          <th className="py-2.5 px-3 min-w-[260px]">Customer & Delivery Address</th>
+                          <th className="py-2.5 px-3 min-w-[240px]">Customer & Delivery Address</th>
                           <th className="py-2.5 px-3 w-20">Pincode</th>
+                          <th className="py-2.5 px-3 min-w-[170px]">Box & Weight</th>
                           <th className="py-2.5 px-3 min-w-[270px]">Select Delivery Partner</th>
                           <th className="py-2.5 px-3 w-24">Freight (₹)</th>
                           <th className="py-2.5 px-3 w-24">Est. Delivery</th>
@@ -3788,7 +4380,7 @@ export default function ShippingMasterApp() {
                         {srOrders.map((ord: any) => (
                           <tr key={ord.order_number} className="hover:bg-ivory/40">
                             <td className="py-2.5 px-3 font-bold text-charcoal">#{ord.order_number}</td>
-                            <td className="py-2.5 px-3 min-w-[260px] max-w-[340px]">
+                            <td className="py-2.5 px-3 min-w-[240px] max-w-[320px]">
                               <div className="font-semibold text-charcoal flex items-center gap-1.5 flex-wrap">
                                 <span>{ord.customer_name}</span>
                                 {ord.customer_mobile && (
@@ -3814,6 +4406,54 @@ export default function ShippingMasterApp() {
                             </td>
                             <td className="py-2.5 px-3 font-mono font-bold text-charcoal">
                               {ord.customer_pincode ? ord.customer_pincode.replace(/\D/g, '').slice(-6) : '—'}
+                            </td>
+                            <td className="py-2.5 px-3 min-w-[170px]">
+                              <div className="space-y-1.5">
+                                <select
+                                  value={ord.box_preset || 'medium'}
+                                  onChange={(e) =>
+                                    handleUpdateOrderBoxInShiprocketModal(
+                                      ord.order_number,
+                                      e.target.value
+                                    )
+                                  }
+                                  className="w-full border border-border-warm rounded-lg px-2 py-1 text-[11px] font-semibold bg-white text-charcoal focus:outline-none focus:border-purple-600 focus:ring-1 focus:ring-purple-600/30"
+                                >
+                                  {BOX_PRESETS.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.name} ({p.length}×{p.breadth}×{p.height} cm)
+                                    </option>
+                                  ))}
+                                  <option value="custom">Custom Dimensions...</option>
+                                </select>
+                                <div className="flex items-center gap-1.5 text-[11px]">
+                                  <span className="text-charcoal-light font-medium">{tx('Wt:', 'वजन:')}</span>
+                                  <div className="relative inline-flex items-center">
+                                    <input
+                                      type="number"
+                                      step="0.05"
+                                      min="0.05"
+                                      max="20"
+                                      value={ord.weight_kg ?? 0.2}
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value);
+                                        if (!isNaN(val) && val > 0) {
+                                          handleUpdateOrderBoxInShiprocketModal(
+                                            ord.order_number,
+                                            ord.box_preset || 'custom',
+                                            { weight_kg: val }
+                                          );
+                                        }
+                                      }}
+                                      className="w-16 px-1.5 py-0.5 text-xs font-mono font-bold border border-border-warm rounded bg-white text-charcoal focus:outline-none focus:border-purple-600"
+                                    />
+                                    <span className="text-[10px] text-charcoal-light ml-1 font-mono">kg</span>
+                                  </div>
+                                  {srRateRecalculating[ord.order_number] && (
+                                    <Loader2 className="w-3.5 h-3.5 text-purple-600 animate-spin flex-shrink-0" />
+                                  )}
+                                </div>
+                              </div>
                             </td>
                             <td className="py-2.5 px-3 min-w-[270px]">
                               {ord.error ? (

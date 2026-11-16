@@ -386,3 +386,100 @@ export function getTimeElapsed(iso: string | null | undefined): { text: string; 
   if (diffHours < 24) return { text: `${diffHours} hr${diffHours > 1 ? 's' : ''} ago`, hours: diffHours };
   return { text: `${diffDays} day${diffDays > 1 ? 's' : ''} ago`, hours: diffHours };
 }
+
+// ─── Package Dimensions & Weight Presets ──────────────────────────────────────
+
+export interface PackageSpecs {
+  preset_id?: 'small' | 'medium' | 'large' | 'xl' | 'custom';
+  length: number;
+  breadth: number;
+  height: number;
+  weight_kg: number;
+}
+
+export interface BoxPreset {
+  id: 'small' | 'medium' | 'large' | 'xl';
+  name: string;
+  nameMr: string;
+  desc: string;
+  length: number;
+  breadth: number;
+  height: number;
+  weight_kg: number;
+  tag: string;
+}
+
+export const BOX_PRESETS: BoxPreset[] = [
+  {
+    id: 'small',
+    name: 'Small Box / Pouch',
+    nameMr: 'लहान बॉक्स / पाऊच',
+    desc: 'Earrings, Rings, Single item',
+    length: 15,
+    breadth: 10,
+    height: 3,
+    weight_kg: 0.15,
+    tag: '15×10×3 · 150g',
+  },
+  {
+    id: 'medium',
+    name: 'Standard Box (Default)',
+    nameMr: 'मध्यम बॉक्स (डिफॉल्ट)',
+    desc: 'Necklaces, Bangles, Standard sets',
+    length: 18,
+    breadth: 12,
+    height: 4,
+    weight_kg: 0.2,
+    tag: '18×12×4 · 200g',
+  },
+  {
+    id: 'large',
+    name: 'Large / Combo Box',
+    nameMr: 'मोठा कॉम्बो बॉक्स',
+    desc: 'Bridal sets, Heavy jewelry, 2-3 items',
+    length: 24,
+    breadth: 18,
+    height: 6,
+    weight_kg: 0.5,
+    tag: '24×18×6 · 500g',
+  },
+  {
+    id: 'xl',
+    name: 'XL / Heavy Bulk Box',
+    nameMr: 'मोठा हेवी बॉक्स',
+    desc: 'Bulk orders, multiple gift hampers',
+    length: 30,
+    breadth: 20,
+    height: 10,
+    weight_kg: 1.0,
+    tag: '30×20×10 · 1.0kg',
+  },
+];
+
+export const DEFAULT_PACKAGE_SPECS: PackageSpecs = {
+  preset_id: 'medium',
+  length: 18,
+  breadth: 12,
+  height: 4,
+  weight_kg: 0.2,
+};
+
+export function parsePackageSpecs(notes?: string | null): PackageSpecs | null {
+  if (!notes) return null;
+  const match = notes.match(/\[pkg:([a-z0-9_-]+):(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)kg\]/i);
+  if (match) {
+    return {
+      preset_id: (match[1] as any) || 'custom',
+      length: Number(match[2]),
+      breadth: Number(match[3]),
+      height: Number(match[4]),
+      weight_kg: Number(match[5]),
+    };
+  }
+  return null;
+}
+
+export function formatPackageNoteTag(specs: PackageSpecs): string {
+  return `[pkg:${specs.preset_id || 'custom'}:${specs.length}x${specs.breadth}x${specs.height}:${specs.weight_kg}kg]`;
+}
+

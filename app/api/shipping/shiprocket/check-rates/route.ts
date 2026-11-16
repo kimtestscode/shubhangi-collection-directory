@@ -8,6 +8,7 @@ export async function POST(req: NextRequest) {
       order_number: string;
       customer_pincode: string;
       weight_kg?: number;
+      dimensions_cm?: { length?: number; breadth?: number; height?: number };
     }> = body.orders || [];
 
     if (!Array.isArray(orders) || orders.length === 0) {
@@ -17,14 +18,19 @@ export async function POST(req: NextRequest) {
     // Limit batch size to 30 to prevent timeout
     const batch = orders.slice(0, 30);
 
-    // Cache serviceability by pincode to avoid redundant API calls for duplicate pincodes in the same batch
+    // Cache serviceability by pincode + weight + dimensions
     const pincodeCache = new Map<string, any>();
 
     const [results, walletBalance] = await Promise.all([
       Promise.all(
         batch.map(async (item) => {
           const pin = String(item.customer_pincode || '').replace(/\D/g, '').trim();
-          const weight = item.weight_kg || 0.2;
+          const weight = typeof item.weight_kg === 'number' && item.weight_kg > 0 ? item.weight_kg : 0.2;
+          const dims = {
+            length: Number(item.dimensions_cm?.length) || 18,
+            breadth: Number(item.dimensions_cm?.breadth) || 12,
+            height: Number(item.dimensions_cm?.height) || 4,
+          };
 
           if (!pin || pin.length !== 6) {
             return {
@@ -36,17 +42,19 @@ export async function POST(req: NextRequest) {
             };
           }
 
-          const cacheKey = `${pin}_${weight}`;
+          const cacheKey = `${pin}_${weight}_${dims.length}x${dims.breadth}x${dims.height}`;
           let res = pincodeCache.get(cacheKey);
 
           if (!res) {
-            res = await checkCourierServiceability(pin, weight);
+            res = await checkCourierServiceability(pin, weight, 0, dims);
             pincodeCache.set(cacheKey, res);
           }
 
           return {
             order_number: item.order_number,
             pincode: pin,
+            weight_kg: weight,
+            dimensions_cm: dims,
             recommended: res.recommended,
             cheapest: res.cheapest,
             delhivery: res.delhivery,

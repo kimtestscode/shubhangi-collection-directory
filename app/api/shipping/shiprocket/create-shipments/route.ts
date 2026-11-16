@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       courier_company_id?: number;
       declared_value?: number;
       weight_kg?: number;
+      dimensions_cm?: { length: number; breadth: number; height: number };
     }> = body.orders || [];
 
     if (!Array.isArray(orders) || orders.length === 0) {
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
           customer_phone: order.customer_mobile || '9999999999',
           declared_value: order.declared_value || 299,
           weight_kg: order.weight_kg || 0.2,
+          dimensions_cm: order.dimensions_cm || { length: 18, breadth: 12, height: 4 },
         });
 
         const shipmentId = orderRes.shipment_id || orderRes.data?.shipment_id;

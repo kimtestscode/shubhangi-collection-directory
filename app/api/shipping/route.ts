@@ -44,8 +44,28 @@ export async function POST(req: NextRequest) {
       const to = rawOrder.to || {};
       const customerName = to.name?.trim() || rawOrder.customer_name?.trim() || null;
       const customerMobile = to.mobile?.trim() || rawOrder.customer_mobile?.trim() || null;
-      const customerAddress = to.address?.trim() || rawOrder.customer_address?.trim() || null;
-      const customerCity = to.city?.trim() || rawOrder.customer_city?.trim() || null;
+
+      // Compose full delivery address including landmark so it is preserved for courier delivery & Shiprocket
+      const baseAddress = (to.address || rawOrder.customer_address || '').trim();
+      const landmark = (to.landmark || rawOrder.customer_landmark || '').trim();
+      let customerAddress: string | null = null;
+
+      if (baseAddress && landmark) {
+        const normBase = baseAddress.toLowerCase();
+        const normLm = landmark.toLowerCase();
+        if (normBase.includes(normLm)) {
+          customerAddress = baseAddress;
+        } else {
+          const formattedLm = /^landmark\b/i.test(landmark) ? landmark : `Landmark: ${landmark}`;
+          customerAddress = `${baseAddress}, ${formattedLm}`;
+        }
+      } else if (baseAddress) {
+        customerAddress = baseAddress;
+      } else if (landmark) {
+        customerAddress = /^landmark\b/i.test(landmark) ? landmark : `Landmark: ${landmark}`;
+      }
+
+      const customerCity = to.city?.trim() || to.district?.trim() || rawOrder.customer_city?.trim() || null;
       const customerPincode = to.pincode?.trim() || rawOrder.customer_pincode?.trim() || null;
 
       // Check existing entry

@@ -72,6 +72,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updates.customer_address = body.customer_address ? String(body.customer_address).trim() : null;
   }
 
+  if (typeof body.customer_landmark !== 'undefined' && body.customer_landmark) {
+    const lm = String(body.customer_landmark).trim();
+    if (lm) {
+      const currentAddr = typeof updates.customer_address === 'string' ? updates.customer_address : '';
+      if (currentAddr) {
+        if (!currentAddr.toLowerCase().includes(lm.toLowerCase())) {
+          const formattedLm = /^landmark\b/i.test(lm) ? lm : `Landmark: ${lm}`;
+          updates.customer_address = `${currentAddr}, ${formattedLm}`;
+        }
+      } else {
+        updates.customer_address = /^landmark\b/i.test(lm) ? lm : `Landmark: ${lm}`;
+      }
+    }
+  }
+
   if (typeof body.customer_city !== 'undefined') {
     updates.customer_city = body.customer_city ? String(body.customer_city).trim() : null;
   }

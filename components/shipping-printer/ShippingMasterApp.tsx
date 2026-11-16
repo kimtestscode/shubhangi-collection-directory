@@ -159,6 +159,7 @@ export default function ShippingMasterApp() {
   const [editCustomerName, setEditCustomerName] = useState('');
   const [editCustomerMobile, setEditCustomerMobile] = useState('');
   const [editCustomerAddress, setEditCustomerAddress] = useState('');
+  const [editCustomerLandmark, setEditCustomerLandmark] = useState('');
   const [editCustomerPincode, setEditCustomerPincode] = useState('');
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -1022,7 +1023,19 @@ export default function ShippingMasterApp() {
     setEditHandedTo(entry.handed_to || '');
     setEditCustomerName(entry.customer_name || '');
     setEditCustomerMobile(entry.customer_mobile || '');
-    setEditCustomerAddress(entry.customer_address || '');
+
+    // Extract landmark if already embedded in customer_address
+    const rawAddr = entry.customer_address || '';
+    const lmMatch = rawAddr.match(/(?:,\s*|\n|\s+)(?:landmark|near)\s*[:\-]\s*(.+)$/i);
+    if (lmMatch) {
+      setEditCustomerLandmark(lmMatch[1].trim());
+      const basePart = rawAddr.slice(0, lmMatch.index).trim().replace(/,\s*$/, '');
+      setEditCustomerAddress(basePart || rawAddr);
+    } else {
+      setEditCustomerLandmark(entry.customer_landmark || '');
+      setEditCustomerAddress(rawAddr);
+    }
+
     setEditCustomerPincode(entry.customer_pincode || '');
     if (entry.shipped_at) {
       const d = new Date(entry.shipped_at);
@@ -1047,6 +1060,18 @@ export default function ShippingMasterApp() {
         resolvedShippedAt = null;
       }
 
+      // Combine base address and landmark so full delivery address is preserved for Shiprocket
+      let finalAddress = editCustomerAddress.trim();
+      const lm = editCustomerLandmark.trim();
+      if (lm) {
+        const normBase = finalAddress.toLowerCase();
+        const normLm = lm.toLowerCase();
+        if (!normBase.includes(normLm)) {
+          const formattedLm = /^landmark\b/i.test(lm) ? lm : `Landmark: ${lm}`;
+          finalAddress = finalAddress ? `${finalAddress}, ${formattedLm}` : formattedLm;
+        }
+      }
+
       const res = await fetch(`/api/shipping/${editingEntry.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1061,7 +1086,8 @@ export default function ShippingMasterApp() {
           shipped_at: resolvedShippedAt,
           customer_name: editCustomerName.trim() || null,
           customer_mobile: editCustomerMobile.trim() || null,
-          customer_address: editCustomerAddress.trim() || null,
+          customer_address: finalAddress || null,
+          customer_landmark: editCustomerLandmark.trim() || null,
           customer_pincode: editCustomerPincode.trim() || null,
         }),
       });
@@ -2897,33 +2923,47 @@ export default function ShippingMasterApp() {
                     rows={2}
                     value={editCustomerAddress}
                     onChange={(e) => setEditCustomerAddress(e.target.value)}
-                    placeholder={tx('Full delivery address with landmark and city', 'संपूर्ण पत्ता, लँडमार्क व शहर')}
+                    placeholder={tx('Street, building, flat or house details', 'घर, इमारत, गल्ली किंवा रस्ता')}
                     className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal resize-none"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-semibold text-charcoal-light mb-1 flex items-center gap-1">
-                    {tx('Pincode', 'पिनकोड')}
-                    {!editCustomerPincode.trim() && (
-                      <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-red-200">
-                        {tx('Missing — required for Shiprocket', 'आवश्यक — Shiprocket साठी')}
-                      </span>
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={editCustomerPincode}
-                    onChange={(e) => setEditCustomerPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="e.g. 421306"
-                    className={`w-full border rounded-xl px-3 py-1.5 text-xs bg-white font-mono focus:outline-none focus:border-gold text-charcoal ${
-                      !editCustomerPincode.trim()
-                        ? 'border-red-300 bg-red-50/40 focus:border-red-400'
-                        : 'border-border-warm'
-                    }`}
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1">
+                      {tx('Landmark (लँडमार्क / जवळचे ठिकाण)', 'लँडमार्क / जवळचे ठिकाण')}
+                    </label>
+                    <input
+                      type="text"
+                      value={editCustomerLandmark}
+                      onChange={(e) => setEditCustomerLandmark(e.target.value)}
+                      placeholder={tx('e.g. Near Ganpati Mandir / Opp Bharat Gas', 'उदा. गणपती मंदिरा जवळ / Opp Bharat Gas')}
+                      className="w-full border border-border-warm rounded-xl px-3 py-1.5 text-xs bg-white focus:outline-none focus:border-gold text-charcoal"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-charcoal-light mb-1 flex items-center gap-1">
+                      {tx('Pincode', 'पिनकोड')}
+                      {!editCustomerPincode.trim() && (
+                        <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-red-200">
+                          {tx('Missing — required for Shiprocket', 'आवश्यक — Shiprocket साठी')}
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={editCustomerPincode}
+                      onChange={(e) => setEditCustomerPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="e.g. 421306"
+                      className={`w-full border rounded-xl px-3 py-1.5 text-xs bg-white font-mono focus:outline-none focus:border-gold text-charcoal ${
+                        !editCustomerPincode.trim()
+                          ? 'border-red-300 bg-red-50/40 focus:border-red-400'
+                          : 'border-border-warm'
+                      }`}
+                    />
+                  </div>
                 </div>
               </div>
 

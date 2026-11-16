@@ -25,6 +25,7 @@ export interface ShippingEntry {
   customer_name: string | null;
   customer_mobile: string | null;
   customer_address: string | null;
+  customer_landmark?: string | null;
   customer_city: string | null;
   customer_pincode: string | null;
   printed_at: string | null;

@@ -42,6 +42,11 @@ export async function POST(req: NextRequest) {
       try {
         const orderNo = String(order.order_number).trim();
 
+        const numDeclared = typeof order.declared_value === 'number'
+          ? order.declared_value
+          : parseFloat(String(order.declared_value || ''));
+        const declaredVal = !isNaN(numDeclared) && numDeclared > 0 ? numDeclared : 299;
+
         // 1. Create Order in Shiprocket
         const orderRes = await createShiprocketOrder({
           order_id: orderNo,
@@ -51,7 +56,7 @@ export async function POST(req: NextRequest) {
           customer_pincode: order.customer_pincode || '400001',
           customer_state: order.customer_state || 'Maharashtra',
           customer_phone: order.customer_mobile || '9999999999',
-          declared_value: order.declared_value || 299,
+          declared_value: declaredVal,
           weight_kg: order.weight_kg || 0.2,
           dimensions_cm: order.dimensions_cm || { length: 18, breadth: 12, height: 4 },
         });

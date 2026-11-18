@@ -218,9 +218,14 @@ export async function createShiprocketOrder(payload: AdhocOrderPayload) {
   // Phone cleaning (10 digits)
   const phone = payload.customer_phone.replace(/\D/g, '').slice(-10);
 
-  const price = payload.declared_value && payload.declared_value > 0 ? payload.declared_value : 299;
+  // Price / Declared value parsing
+  const rawPrice = payload.declared_value;
+  const numPrice = typeof rawPrice === 'number' ? rawPrice : parseFloat(String(rawPrice || ''));
+  const price = !isNaN(numPrice) && numPrice > 0 ? Math.round(numPrice) : 299;
   const weight = payload.weight_kg || 0.2;
   const dims = payload.dimensions_cm || { length: 18, breadth: 12, height: 4 };
+
+  console.log(`[Shiprocket] Creating adhoc order #${payload.order_id}: selling_price/sub_total = ₹${price}, wt = ${weight}kg, dims = ${dims.length}x${dims.breadth}x${dims.height}`);
 
   const body = {
     order_id: payload.order_id,

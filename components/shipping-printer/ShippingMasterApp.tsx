@@ -182,7 +182,7 @@ export default function ShippingMasterApp() {
   // Shiprocket PDF Cropper State
   const [cropModalOpen, setCropModalOpen] = useState(false);
   const [cropFile, setCropFile] = useState<File | null>(null);
-  const [cropLayout, setCropLayout] = useState<'4_on_1' | '2_on_1'>('4_on_1');
+  const [cropLayout, setCropLayout] = useState<'8_on_1' | '4_on_1' | '2_on_1'>('8_on_1');
   const [croppingBusy, setCroppingBusy] = useState(false);
 
   // Shiprocket API Dispatch & Courier Selection State
@@ -195,6 +195,8 @@ export default function ShippingMasterApp() {
     results: any[];
     label_url?: string | null;
     cropped_pdf_base64?: string | null;
+    manifest_url?: string | null;
+    manifest_pdf_base64?: string | null;
   } | null>(null);
 
   // Manifest Generation State
@@ -590,19 +592,22 @@ export default function ShippingMasterApp() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Shiprocket_Labels_${cropLayout === '4_on_1' ? '4_on_A4' : '2_on_A4'}.pdf`;
+      const layoutFileTag = cropLayout === '8_on_1' ? '8_on_A4' : cropLayout === '4_on_1' ? '4_on_A4' : '2_on_A4';
+      a.download = `Shiprocket_Labels_${layoutFileTag}_${Date.now()}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
 
       setCropModalOpen(false);
       setCropFile(null);
       beep(880, 120);
+      const layoutLabel = cropLayout === '8_on_1' ? '8-on-1' : cropLayout === '4_on_1' ? '4-on-1' : '2-on-1';
+      const layoutLabelMr = cropLayout === '8_on_1' ? '८-ऑन-१' : cropLayout === '4_on_1' ? '४-ऑन-१' : '२-ऑन-१';
       setFeedback({
         kind: 'success',
         order: 'Shiprocket Labels',
         note: tx(
-          `Cropped ${cropLayout === '4_on_1' ? '4-on-1' : '2-on-1'} A4 PDF downloaded successfully! ✓`,
-          `क्रॉप केलेले ${cropLayout === '4_on_1' ? '४-ऑन-१' : '२-ऑन-१'} A4 PDF यशस्वीरित्या डाऊनलोड झाले! ✓`
+          `Cropped ${layoutLabel} A4 PDF downloaded successfully! ✓`,
+          `क्रॉप केलेले ${layoutLabelMr} A4 PDF यशस्वीरित्या डाऊनलोड झाले! ✓`
         ),
       });
     } catch (e: any) {
@@ -844,7 +849,7 @@ export default function ShippingMasterApp() {
             customer_pincode: o.customer_pincode,
             customer_mobile: o.customer_mobile,
             courier_company_id: o.selected_courier.courier_company_id,
-            declared_value: 299,
+            declared_value: o.declared_value && o.declared_value > 0 ? o.declared_value : 299,
             weight_kg: o.weight_kg || 0.2,
             dimensions_cm: o.dimensions_cm || { length: 18, breadth: 12, height: 4 },
           })),
@@ -856,11 +861,11 @@ export default function ShippingMasterApp() {
 
       setSrSuccessData(data);
 
-      // Auto-trigger download of cropped 4-on-1 A4 labels
+      // Auto-trigger download of cropped 8-on-1 A4 labels
       if (data.cropped_pdf_base64) {
         downloadBase64Pdf(
           data.cropped_pdf_base64,
-          `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
+          `Shiprocket_Labels_8_on_A4_${Date.now()}.pdf`
         );
       }
 
@@ -1030,6 +1035,76 @@ export default function ShippingMasterApp() {
       URL.revokeObjectURL(url);
     } catch (err: any) {
       alert(err.message || 'Error generating pickup manifest');
+    } finally {
+      setManifestBusy(false);
+    }
+  }
+
+  async function handlePrintShiprocketManifestFromModal() {
+    if (!srSuccessData || !srSuccessData.results) return;
+
+    // 1. If already fetched and trimmed during booking
+    if (srSuccessData.manifest_pdf_base64) {
+      downloadBase64Pdf(
+        srSuccessData.manifest_pdf_base64,
+        `Shiprocket_Manifest_Refined_A4_${Date.now()}.pdf`
+      );
+      return;
+    }
+
+    // 2. Collect shipment IDs
+    const shipmentIds = srSuccessData.results
+      .filter((r: any) => r.success && r.shipment_id)
+      .map((r: any) => Number(r.shipment_id));
+
+    if (shipmentIds.length === 0) {
+      alert(
+        tx(
+          'No booked shipment IDs found to fetch manifest.',
+          'मॅनिफेस्ट मिळवण्यासाठी वैध शिपमेंट आयडी सापडले नाहीत.'
+        )
+      );
+      return;
+    }
+
+    setManifestBusy(true);
+    try {
+      const res = await fetch('/api/shipping/print-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_manifest',
+          shipment_ids: shipmentIds,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.pdf_base64) {
+        throw new Error(json.error || 'Failed to generate manifest PDF');
+      }
+
+      downloadBase64Pdf(
+        json.pdf_base64,
+        `Shiprocket_Manifest_Refined_A4_${Date.now()}.pdf`
+      );
+    } catch (err: any) {
+      console.warn('Shiprocket manifest fetch error:', err);
+      const msg = err.message || '';
+      const tryFallback = confirm(
+        tx(
+          `Shiprocket Note: ${msg}\n\nManifests can be scheduled/downloaded from the Shiprocket dashboard, then refined via Print Center.\n\nWould you like to print the emergency sign sheet instead?`,
+          `शिपरोकेट नोंद: ${msg}\n\nShiprocket डॅशबोर्डवरून पिकअप शेड्युल केल्यावर किंवा डाऊनलोड केल्यावर 'Print Center' मधून व्हाईटस्पेस कट करून प्रिंट करू शकता.\n\nआत्ता तात्पुरती साईन शीट प्रिंट करायची आहे का?`
+        )
+      );
+      if (tryFallback) {
+        handlePrintManifestForParcels(
+          srSuccessData.results.map((r: any) => ({
+            order_number: r.order_number,
+            tracking_number: r.awb_code,
+            courier_name: r.courier_name,
+          }))
+        );
+      }
     } finally {
       setManifestBusy(false);
     }
@@ -1839,11 +1914,22 @@ export default function ShippingMasterApp() {
               type="button"
               onClick={() => setCropModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gold text-charcoal hover:bg-gold-light text-xs font-bold transition-all shadow-sm cursor-pointer"
-              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
+              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 8 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ८ क्रॉप करा')}
             >
               <Scissors className="w-3.5 h-3.5 text-charcoal" />
-              <span>{tx('Crop Shiprocket Labels (A4)', 'शिपरोकेट लेबल्स क्रॉप करा (A4)')}</span>
+              <span>{tx('Crop Labels (8-on-1)', 'लेबल्स क्रॉप करा (८-ऑन-१)')}</span>
             </button>
+
+            <a
+              href="/admin/print-center"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-700 hover:bg-purple-600 text-white text-xs font-bold transition-all shadow-sm cursor-pointer"
+              title={tx('Open dedicated Print Center for 8-on-1 label tiling and whitespace-removed manifest combining', '८-ऑन-१ लेबल्स आणि झिरो-वेस्ट मॅनिफेस्टसाठी प्रिंट सेंटर उघडा')}
+            >
+              <Printer className="w-3.5 h-3.5 text-white" />
+              <span>{tx('Print Center', 'प्रिंट सेंटर')}</span>
+            </a>
 
             <button
               type="button"
@@ -2475,11 +2561,22 @@ export default function ShippingMasterApp() {
               type="button"
               onClick={() => setCropModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-semibold transition-colors shadow-2xs cursor-pointer"
-              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 4 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ४ क्रॉप करा')}
+              title={tx('Upload Shiprocket combined PDF to auto-crop and tile 8 labels on A4', 'शिपरोकेट PDF लेबल्स A4 शीटवर ८ क्रॉप करा')}
             >
               <Scissors className="w-4 h-4 text-amber-700" />
-              <span>{tx('Crop Shiprocket Labels', 'शिपरोकेट लेबल्स क्रॉप करा')}</span>
+              <span>{tx('Crop Labels (8-on-1)', 'लेबल्स क्रॉप करा (८-ऑन-१)')}</span>
             </button>
+
+            <a
+              href="/admin/print-center"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-purple-300 bg-purple-50 hover:bg-purple-100 text-purple-900 font-semibold transition-colors shadow-2xs cursor-pointer"
+              title={tx('Open dedicated Print Center for 8-on-1 label tiling and whitespace-removed manifest combining', '८-ऑन-१ लेबल्स आणि झिरो-वेस्ट मॅनिफेस्टसाठी प्रिंट सेंटर उघडा')}
+            >
+              <Printer className="w-4 h-4 text-purple-700" />
+              <span>{tx('Print Center', 'प्रिंट सेंटर')}</span>
+            </a>
 
             <button
               onClick={exportCsv}
@@ -4114,7 +4211,24 @@ export default function ShippingMasterApp() {
                 <label className="block text-xs font-semibold text-charcoal mb-1.5">
                   {tx('Choose Print Layout:', 'प्रिंट लेआउट निवडा:')}
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setCropLayout('8_on_1')}
+                    className={`p-3 rounded-2xl border text-left transition-all ${
+                      cropLayout === '8_on_1'
+                        ? 'border-gold bg-gold/10 ring-2 ring-gold/30'
+                        : 'border-border-warm bg-white hover:bg-ivory'
+                    }`}
+                  >
+                    <div className="font-bold text-xs text-charcoal">
+                      {tx('8 Labels per A4 (Best)', 'A4 वर ८ लेबल्स')}
+                    </div>
+                    <div className="text-[10px] text-charcoal-light mt-0.5">
+                      {tx('2x4 Grid · Zero waste · 8 orders per page', '२x४ ग्रिड · झिरो वेस्ट · ८ ऑर्डर्स')}
+                    </div>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setCropLayout('4_on_1')}
@@ -4125,10 +4239,10 @@ export default function ShippingMasterApp() {
                     }`}
                   >
                     <div className="font-bold text-xs text-charcoal">
-                      {tx('4 Labels per A4 Sheet', 'A4 वर ४ लेबल्स')}
+                      {tx('4 Labels per A4', 'A4 वर ४ लेबल्स')}
                     </div>
                     <div className="text-[10px] text-charcoal-light mt-0.5">
-                      {tx('2x2 Grid · Saves 75% paper · Best for standard A4', '२x२ ग्रिड · ७५% कागद वाचवतो')}
+                      {tx('2x2 Grid · Medium size', '२x२ ग्रिड · मध्यम आकार')}
                     </div>
                   </button>
 
@@ -4142,10 +4256,10 @@ export default function ShippingMasterApp() {
                     }`}
                   >
                     <div className="font-bold text-xs text-charcoal">
-                      {tx('2 Labels per A4 Sheet', 'A4 वर २ लेबल्स')}
+                      {tx('2 Labels per A4', 'A4 वर २ लेबल्स')}
                     </div>
                     <div className="text-[10px] text-charcoal-light mt-0.5">
-                      {tx('Large 1:1 original size · Extra big barcodes', '१:१ मूळ आकार · मोठे बारकोड')}
+                      {tx('Large 1:1 original size · Extra big', '१:१ मूळ आकार')}
                     </div>
                   </button>
                 </div>
@@ -4297,8 +4411,8 @@ export default function ShippingMasterApp() {
                       </div>
                       <div className="text-emerald-800">
                         {tx(
-                          'AWB numbers are registered, shipping master is updated to Picked Up, and your clean 4-on-1 A4 labels have been prepared.',
-                          'AWB नंबर जोडले गेले आहेत, शिपिंग मास्टर अपडेट झाले आहे आणि ४-ऑन-१ A4 लेबल्स तयार झाली आहेत.'
+                          'AWB numbers are registered, shipping master is updated to Picked Up, and your clean 8-on-1 A4 labels have been prepared.',
+                          'AWB नंबर जोडले गेले आहेत, शिपिंग मास्टर अपडेट झाले आहे आणि ८-ऑन-१ A4 लेबल्स तयार झाली आहेत.'
                         )}
                       </div>
                     </div>
@@ -4358,33 +4472,38 @@ export default function ShippingMasterApp() {
                         onClick={() =>
                           downloadBase64Pdf(
                             srSuccessData.cropped_pdf_base64!,
-                            `Shiprocket_Labels_4_on_A4_${Date.now()}.pdf`
+                            `Shiprocket_Labels_8_on_A4_${Date.now()}.pdf`
                           )
                         }
                         className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-gold hover:bg-gold-light text-charcoal font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
                       >
                         <Scissors className="w-4 h-4 text-charcoal" />
-                        <span>{tx('Download 4-on-1 Clean Labels PDF (A4)', '४-ऑन-१ A4 लेबल्स पुन्हा डाऊनलोड करा')}</span>
+                        <span>{tx('Download 8-on-1 Clean Labels PDF (A4)', '८-ऑन-१ A4 लेबल्स डाऊनलोड करा')}</span>
                       </button>
                     )}
 
                     <button
                       type="button"
                       disabled={manifestBusy}
-                      onClick={() =>
-                        handlePrintManifestForParcels(
-                          srSuccessData.results.map((r: any) => ({
-                            order_number: r.order_number,
-                            tracking_number: r.awb_code,
-                            courier_name: r.courier_name,
-                          }))
-                        )
-                      }
+                      onClick={handlePrintShiprocketManifestFromModal}
                       className="inline-flex items-center justify-center gap-2 p-3.5 rounded-2xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer disabled:opacity-50"
                     >
                       {manifestBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                      <span>{tx('Print Pickup Manifest (2-in-1 A4 Sign Sheet)', 'डिलिव्हरी बॉयसाठी २-इन-१ मॅनिफेस्ट प्रिंट करा')}</span>
+                      <span>{tx('Print Refined Manifest (Whitespace Cut A4)', 'रिफाईंड मॅनिफेस्ट डाऊनलोड करा (झिरो वेस्ट A4)')}</span>
                     </button>
+
+                    <div className="col-span-1 sm:col-span-2 flex items-center justify-between text-xs text-charcoal-light bg-ivory/60 px-3.5 py-2.5 rounded-xl border border-border-warm/60 flex-wrap gap-2">
+                      <span>{tx('Need custom cuts or multi-manifest combining from dashboard?', 'डॅशबोर्डवरून घेतलेले अनेक मॅनिफेस्ट एकत्र जोडायचे आहेत का?')}</span>
+                      <a
+                        href="/admin/print-center"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-purple-700 hover:text-purple-900 hover:underline inline-flex items-center gap-1"
+                      >
+                        <span>{tx('Open Print Center', 'प्रिंट सेंटर उघडा')}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   </div>
 
                   <div className="flex justify-end pt-2 border-t border-border-warm">

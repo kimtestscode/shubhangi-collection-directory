@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
-    const layout = ((formData.get('layout') as string) || '4_on_1') as '4_on_1' | '2_on_1';
+    const layout = ((formData.get('layout') as string) || '8_on_1') as '8_on_1' | '4_on_1' | '2_on_1';
 
     if (!file) {
       return NextResponse.json({ error: 'Please upload a PDF file' }, { status: 400 });

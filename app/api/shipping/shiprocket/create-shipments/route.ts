@@ -5,8 +5,9 @@ import {
   createShiprocketOrder,
   assignShiprocketAWB,
   generateShiprocketLabel,
+  generateShiprocketManifest,
 } from '@/lib/shiprocket';
-import { cropShiprocketPdfToA4 } from '@/lib/crop-labels';
+import { cropShiprocketPdfToA4, tileManifestPdfs } from '@/lib/crop-labels';
 
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) {
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Generate & Crop Combined Labels if shipments were booked
+    // 4. Generate & Crop Combined Labels to 8-on-1 A4 if shipments were booked
     let croppedPdfBase64: string | null = null;
     let labelUrl: string | null = null;
 
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
           const pdfRes = await fetch(labelUrl);
           if (pdfRes.ok) {
             const rawBuffer = Buffer.from(await pdfRes.arrayBuffer());
-            const croppedBuffer = await cropShiprocketPdfToA4(rawBuffer, '4_on_1');
+            const croppedBuffer = await cropShiprocketPdfToA4(rawBuffer, '8_on_1');
             croppedPdfBase64 = Buffer.from(croppedBuffer).toString('base64');
           }
         }
@@ -133,11 +134,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 5. Attempt auto-generating whitespace-trimmed Manifest if available
+    let manifestPdfBase64: string | null = null;
+    let manifestUrl: string | null = null;
+    if (shipmentIdsToLabel.length > 0) {
+      try {
+        manifestUrl = await generateShiprocketManifest(shipmentIdsToLabel);
+        if (manifestUrl) {
+          const mRes = await fetch(manifestUrl);
+          if (mRes.ok) {
+            const rawMBuffer = Buffer.from(await mRes.arrayBuffer());
+            const tiled = await tileManifestPdfs([rawMBuffer]);
+            manifestPdfBase64 = Buffer.from(tiled).toString('base64');
+          }
+        }
+      } catch (manifestErr) {
+        // Manifest may require pickup schedule first depending on courier; non-blocking
+        console.log('Manifest not ready at booking time:', manifestErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       results,
       label_url: labelUrl,
       cropped_pdf_base64: croppedPdfBase64,
+      manifest_url: manifestUrl,
+      manifest_pdf_base64: manifestPdfBase64,
     });
   } catch (err: any) {
     console.error('Shiprocket create-shipments error:', err);

@@ -472,3 +472,22 @@ export function formatPackageNoteTag(specs: PackageSpecs): string {
   return `[pkg:${specs.preset_id || 'custom'}:${specs.length}x${specs.breadth}x${specs.height}:${specs.weight_kg}kg]`;
 }
 
+// ─── Order Amount / Declared Value Helpers ─────────────────────────────────────
+
+export function parseOrderAmount(notes?: string | null): number | null {
+  if (!notes) return null;
+  const match = notes.match(/\[amt:(\d+(?:\.\d+)?)\]/i);
+  return match ? Number(match[1]) : null;
+}
+
+export function setNoteTag(existingNotes: string | null | undefined, tagKey: string, value: string): string {
+  let notes = (existingNotes || '').trim();
+  const tagRegex = new RegExp(`\\[${tagKey}:[^\\]]+\\]`, 'i');
+  const newTag = `[${tagKey}:${value}]`;
+  if (tagRegex.test(notes)) {
+    return notes.replace(tagRegex, newTag).trim();
+  }
+  return notes ? `${newTag} ${notes}` : newTag;
+}
+
+

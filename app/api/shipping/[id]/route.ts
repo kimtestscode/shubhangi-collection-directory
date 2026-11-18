@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase';
 import { isAdminRequest } from '@/lib/adminAuth';
-import { COURIER_META, CourierPartner } from '@/lib/shipping';
+import { COURIER_META, CourierPartner, setNoteTag } from '@/lib/shipping';
 
 const unauthorized = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -112,6 +112,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (typeof body.notes !== 'undefined') {
     updates.notes = typeof body.notes === 'string' ? body.notes.trim() : null;
+  }
+
+  if (typeof body.order_amount !== 'undefined' || typeof body.amount !== 'undefined') {
+    const rawVal = body.order_amount ?? body.amount;
+    const num = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+    if (!isNaN(num) && num > 0) {
+      let currentNotes =
+        typeof updates.notes === 'string'
+          ? updates.notes
+          : typeof body.notes === 'string'
+          ? body.notes
+          : undefined;
+      if (typeof currentNotes === 'undefined') {
+        const { data: curr } = await supabase.from('shipping_master').select('notes').eq('id', id).single();
+        currentNotes = curr?.notes || '';
+      }
+      updates.notes = setNoteTag(currentNotes, 'amt', String(num));
+    }
   }
 
   if (Object.keys(updates).length === 0) {

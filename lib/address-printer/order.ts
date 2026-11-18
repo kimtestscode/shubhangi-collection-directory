@@ -21,6 +21,7 @@ export interface OrderFrom {
 export interface Order {
   id: string;           // UUID for React keys
   orderNumber: string;
+  amount?: number;      // Parsed or declared order amount (₹)
   to: OrderTo;
   from: OrderFrom;
   rawText: string;      // Original text — never discarded

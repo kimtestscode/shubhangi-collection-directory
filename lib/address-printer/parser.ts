@@ -188,6 +188,7 @@ function parseOrderBlock(raw: string): Order {
     rawBlock: '',
   };
 
+  let orderAmount: number | undefined;
   let currentField: FieldKey | null = null;
   let inFrom = false;
   let sawToMarker = false;
@@ -203,6 +204,16 @@ function parseOrderBlock(raw: string): Order {
 
     // Skip WhatsApp chat timestamps / date headers inside a block
     if (isChatNoise(line)) continue;
+
+    // Detect Order Amount (e.g. *Total amount= 530*, Amount: 530, etc.)
+    // Checked early so it is never dumped into address or from lines
+    const amtMatch = line.match(
+      /^(?:total\s*amount|total\s*amt|order\s*amount|order\s*value|amount|amt|total)\b[\s\-:=.]*(?:rs\.?|inr|₹)?\s*(\d+(?:\.\d+)?)/i
+    );
+    if (amtMatch) {
+      orderAmount = Number(amtMatch[1]);
+      continue;
+    }
 
     // Skip "To," section-marker
     if (/^to\s*,?\s*$/i.test(line)) {
@@ -325,6 +336,7 @@ function parseOrderBlock(raw: string): Order {
   return {
     id: uuid(),
     orderNumber,
+    amount: orderAmount,
     to,
     from,
     rawText: raw,

@@ -15,7 +15,7 @@ import {
   formatShippedAt, istDateKey, getTimeElapsed, getWhatsAppUrl,
   cleanMobileNumber, buildWhatsAppTrackingMessage,
   resolveCourierMeta, getShippingStatusMeta,
-  PackageSpecs, BoxPreset, BOX_PRESETS, DEFAULT_PACKAGE_SPECS, parsePackageSpecs
+  PackageSpecs, BoxPreset, BOX_PRESETS, DEFAULT_PACKAGE_SPECS, parsePackageSpecs, parseOrderAmount
 } from '@/lib/shipping';
 import { Order } from '@/lib/address-printer/order';
 import ShippingPrintPreview from './ShippingPrintPreview';
@@ -208,6 +208,9 @@ export default function ShippingMasterApp() {
   const [bulkBoxPresetId, setBulkBoxPresetId] = useState<string>('standard');
   const [srRateRecalculating, setSrRateRecalculating] = useState<Record<string, boolean>>({});
   const [editPackageSpecs, setEditPackageSpecs] = useState<PackageSpecs>(DEFAULT_PACKAGE_SPECS);
+  // Order Amount / Declared Value State (from WhatsApp / manual)
+  const [orderAmountsMap, setOrderAmountsMap] = useState<Record<string, number>>({});
+  const [editOrderAmount, setEditOrderAmount] = useState<string>('');
 
   // Batch Multi-Scan Input State
   const [isBatchScanOpen, setIsBatchScanOpen] = useState(false);
@@ -280,6 +283,38 @@ export default function ShippingMasterApp() {
       return DEFAULT_PACKAGE_SPECS;
     },
     [packagesMap]
+  );
+
+  // Load saved order amounts from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sc_shipping_order_amounts');
+      if (saved) {
+        setOrderAmountsMap(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  const updateOrderAmount = useCallback((orderNumber: string, amount: number) => {
+    setOrderAmountsMap((prev) => {
+      const next = { ...prev, [orderNumber]: amount };
+      try {
+        localStorage.setItem('sc_shipping_order_amounts', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const getOrderAmount = useCallback(
+    (e: { order_number: string; notes?: string | null }): number | null => {
+      if (typeof orderAmountsMap[e.order_number] === 'number') {
+        return orderAmountsMap[e.order_number];
+      }
+      const fromNote = parseOrderAmount(e.notes);
+      if (typeof fromNote === 'number') return fromNote;
+      return null;
+    },
+    [orderAmountsMap]
   );
 
   // ─── record a scan ────────────────────────────────────────────────────────
@@ -592,6 +627,7 @@ export default function ShippingMasterApp() {
     const initialOrders = selectedEntries.map((e) => {
       const cleanPin = (e.customer_pincode || '').replace(/\D/g, '').slice(-6);
       const pkg = getOrderPackageSpecs(e);
+      const parsedAmt = getOrderAmount(e);
       return {
         order_number: e.order_number,
         customer_name: e.customer_name || 'Customer',
@@ -602,6 +638,7 @@ export default function ShippingMasterApp() {
         weight_kg: pkg.weight_kg,
         dimensions_cm: { length: pkg.length, breadth: pkg.breadth, height: pkg.height },
         box_preset: pkg.preset_id === 'medium' ? 'standard' : (pkg.preset_id || 'standard'),
+        declared_value: parsedAmt && parsedAmt > 0 ? parsedAmt : 299,
         available_couriers: [] as any[],
         selected_courier: null as any,
         error: '',
@@ -758,6 +795,16 @@ export default function ShippingMasterApp() {
     } finally {
       setSrRateRecalculating((prev) => ({ ...prev, [orderNumber]: false }));
     }
+  }
+
+  function handleUpdateOrderAmountInShiprocketModal(orderNumber: string, amount: number) {
+    updateOrderAmount(orderNumber, amount);
+    setSrOrders((prev) =>
+      prev.map((o) => {
+        if (o.order_number !== orderNumber) return o;
+        return { ...o, declared_value: amount };
+      })
+    );
   }
 
   function handleBulkSetCourierPreference(type: 'delhivery' | 'cheapest') {
@@ -1181,6 +1228,8 @@ export default function ShippingMasterApp() {
     setEditCustomerPincode(entry.customer_pincode || '');
     const pkg = getOrderPackageSpecs(entry);
     setEditPackageSpecs(pkg);
+    const parsedAmt = getOrderAmount(entry);
+    setEditOrderAmount(parsedAmt ? String(parsedAmt) : '');
     if (entry.shipped_at) {
       const d = new Date(entry.shipped_at);
       const pad = (n: number) => String(n).padStart(2, '0');
@@ -1233,6 +1282,7 @@ export default function ShippingMasterApp() {
           customer_address: finalAddress || null,
           customer_landmark: editCustomerLandmark.trim() || null,
           customer_pincode: editCustomerPincode.trim() || null,
+          order_amount: editOrderAmount ? Number(editOrderAmount) : null,
         }),
       });
 
@@ -1242,6 +1292,9 @@ export default function ShippingMasterApp() {
       setEntries((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
       if (editingEntry) {
         updateOrderPackage(editingEntry.order_number, editPackageSpecs);
+        if (editOrderAmount) {
+          updateOrderAmount(editingEntry.order_number, Number(editOrderAmount));
+        }
       }
       setEditingEntry(null);
       beep(880, 80);
@@ -1681,6 +1734,7 @@ export default function ShippingMasterApp() {
         'Box Preset',
         'Dimensions (cm)',
         'Weight (kg)',
+        'Order Amount (₹)',
         'Shipping Cost (₹)',
         'Tracking URL',
         'Shipped / Pickup At',
@@ -1697,6 +1751,7 @@ export default function ShippingMasterApp() {
         if (extracted) courierName = extracted;
       }
       const pkg = getOrderPackageSpecs(e);
+      const amt = getOrderAmount(e);
       rows.push([
         e.order_number,
         e.status || 'pending',
@@ -1709,6 +1764,7 @@ export default function ShippingMasterApp() {
         pkg.preset_id || 'medium',
         `${pkg.length}x${pkg.breadth}x${pkg.height}`,
         String(pkg.weight_kg),
+        amt ? `₹${amt}` : '',
         e.shipping_cost ? `₹${e.shipping_cost}` : '',
         e.tracking_url ?? '',
         e.shipped_at ? formatShippedAt(e.shipped_at) : '',
@@ -2682,8 +2738,20 @@ export default function ShippingMasterApp() {
 
                       {/* Order Number & Printed Info */}
                       <td className="px-4 py-3 align-top">
-                        <div className="font-mono font-bold text-charcoal text-sm sm:text-base">
-                          #{e.order_number}
+                        <div className="font-mono font-bold text-charcoal text-sm sm:text-base flex items-center gap-1.5 flex-wrap">
+                          <span>#{e.order_number}</span>
+                          {(() => {
+                            const amt = getOrderAmount(e);
+                            if (!amt) return null;
+                            return (
+                              <span
+                                className="font-mono font-bold text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded"
+                                title={tx('Order Bill Amount (₹)', 'ऑर्डर बिल रक्कम (₹)')}
+                              >
+                                ₹{amt}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div className="text-[11px] text-charcoal-light mt-0.5">
                           {tx('Printed', 'प्रिंट')}: {elapsedPrinted.text}
@@ -3435,23 +3503,45 @@ export default function ShippingMasterApp() {
                 </div>
               </div>
 
-              {/* Shipping Cost (₹) Charged */}
-              <div>
-                <label htmlFor="edit-cost" className="block font-semibold text-charcoal mb-1.5">
-                  {tx('Shipping Cost Charged (₹)', 'कुरिअर खर्च (₹)')}
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-charcoal text-sm">
-                    ₹
-                  </span>
-                  <input
-                    id="edit-cost"
-                    type="number"
-                    value={editShippingCost}
-                    onChange={(e) => setEditShippingCost(e.target.value)}
-                    placeholder="e.g. 80"
-                    className="w-full pl-8 pr-3.5 py-2.5 text-sm font-mono font-bold border border-border-warm rounded-xl bg-ivory/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 text-charcoal"
-                  />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Order Bill Amount (₹) */}
+                <div>
+                  <label htmlFor="edit-order-amount" className="block font-semibold text-charcoal mb-1.5 text-xs">
+                    {tx('Order Bill Amount (₹) [Shiprocket]', 'ऑर्डर बिल रक्कम (₹)')}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-emerald-700 text-sm">
+                      ₹
+                    </span>
+                    <input
+                      id="edit-order-amount"
+                      type="number"
+                      value={editOrderAmount}
+                      onChange={(e) => setEditOrderAmount(e.target.value)}
+                      placeholder="e.g. 530"
+                      className="w-full pl-8 pr-3.5 py-2.5 text-sm font-mono font-bold border border-border-warm rounded-xl bg-ivory/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 text-emerald-800"
+                    />
+                  </div>
+                </div>
+
+                {/* Shipping Cost (₹) Charged */}
+                <div>
+                  <label htmlFor="edit-cost" className="block font-semibold text-charcoal mb-1.5 text-xs">
+                    {tx('Courier Shipping Cost (₹)', 'कुरिअर खर्च (₹)')}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-charcoal text-sm">
+                      ₹
+                    </span>
+                    <input
+                      id="edit-cost"
+                      type="number"
+                      value={editShippingCost}
+                      onChange={(e) => setEditShippingCost(e.target.value)}
+                      placeholder="e.g. 80"
+                      className="w-full pl-8 pr-3.5 py-2.5 text-sm font-mono font-bold border border-border-warm rounded-xl bg-ivory/40 focus:outline-none focus:border-gold focus:ring-2 focus:ring-gold/20 text-charcoal"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -4378,6 +4468,7 @@ export default function ShippingMasterApp() {
                           <th className="py-2.5 px-3 min-w-[240px]">Customer & Delivery Address</th>
                           <th className="py-2.5 px-3 w-20">Pincode</th>
                           <th className="py-2.5 px-3 min-w-[170px]">Box & Weight</th>
+                          <th className="py-2.5 px-3 w-24">{tx('Order Value (₹)', 'ऑर्डर किंमत (₹)')}</th>
                           <th className="py-2.5 px-3 min-w-[270px]">Select Delivery Partner</th>
                           <th className="py-2.5 px-3 w-24">Freight (₹)</th>
                           <th className="py-2.5 px-3 w-24">Est. Delivery</th>
@@ -4464,6 +4555,24 @@ export default function ShippingMasterApp() {
                                     <Loader2 className="w-3.5 h-3.5 text-purple-600 animate-spin flex-shrink-0" />
                                   )}
                                 </div>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 w-24 whitespace-nowrap">
+                              <div className="relative inline-flex items-center">
+                                <span className="text-emerald-700 font-bold text-xs mr-1">₹</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={ord.declared_value ?? 299}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    if (!isNaN(val) && val > 0) {
+                                      handleUpdateOrderAmountInShiprocketModal(ord.order_number, val);
+                                    }
+                                  }}
+                                  className="w-16 px-1.5 py-0.5 text-xs font-mono font-bold border border-border-warm rounded bg-white text-emerald-800 focus:outline-none focus:border-purple-600"
+                                  title={tx('Order bill amount sent to Shiprocket', 'शिपरोकेटला जाणारी बिल रक्कम')}
+                                />
                               </div>
                             </td>
                             <td className="py-2.5 px-3 min-w-[270px]">

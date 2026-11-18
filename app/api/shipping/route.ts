@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase';
 import { isAdminRequest } from '@/lib/adminAuth';
-import { normalizeOrderNumber, COURIER_META, CourierPartner } from '@/lib/shipping';
+import { normalizeOrderNumber, COURIER_META, CourierPartner, setNoteTag } from '@/lib/shipping';
 
 const unauthorized = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -67,6 +67,12 @@ export async function POST(req: NextRequest) {
 
       const customerCity = to.city?.trim() || to.district?.trim() || rawOrder.customer_city?.trim() || null;
       const customerPincode = to.pincode?.trim() || rawOrder.customer_pincode?.trim() || null;
+      const orderAmount =
+        typeof rawOrder.amount === 'number' && rawOrder.amount > 0
+          ? rawOrder.amount
+          : typeof rawOrder.order_amount === 'number' && rawOrder.order_amount > 0
+          ? rawOrder.order_amount
+          : null;
 
       // Check existing entry
       const { data: existing } = await supabase
@@ -85,6 +91,9 @@ export async function POST(req: NextRequest) {
         if (customerAddress) updates.customer_address = customerAddress;
         if (customerCity) updates.customer_city = customerCity;
         if (customerPincode) updates.customer_pincode = customerPincode;
+        if (orderAmount) {
+          updates.notes = setNoteTag(existing.notes, 'amt', String(orderAmount));
+        }
 
         const { error: updateErr } = await supabase
           .from('shipping_master')
@@ -96,6 +105,11 @@ export async function POST(req: NextRequest) {
         }
       } else {
         // Insert new pending order
+        let initialNotes: string | null = null;
+        if (orderAmount) {
+          initialNotes = setNoteTag(null, 'amt', String(orderAmount));
+        }
+
         const { error: insertErr } = await supabase.from('shipping_master').insert({
           order_number: orderNo,
           status: 'pending',
@@ -107,6 +121,7 @@ export async function POST(req: NextRequest) {
           printed_at: nowIso,
           shipped_at: null,
           handed_to: null,
+          notes: initialNotes,
         });
 
         if (insertErr) {

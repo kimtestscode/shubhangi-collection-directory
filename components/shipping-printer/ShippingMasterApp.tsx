@@ -1682,17 +1682,9 @@ export default function ShippingMasterApp() {
     entries.forEach((e) => {
       const cleanOrder = e.order_number.toLowerCase().replace(/^#/, '');
       const cleanTrack = (e.tracking_number || '').toLowerCase().replace(/^#/, '');
-      const mobile = e.customer_mobile || '';
-      const name = (e.customer_name || '').toLowerCase();
 
       parsedSearch.tokens.forEach((t) => {
-        if (
-          cleanOrder === t ||
-          cleanOrder.includes(t) ||
-          (cleanTrack && (cleanTrack === t || cleanTrack.includes(t))) ||
-          (mobile && mobile.includes(t)) ||
-          (name && name.includes(t))
-        ) {
+        if (cleanOrder === t || (cleanTrack && cleanTrack === t)) {
           matchedTokens.add(t);
           if (!matchedOrderIds.includes(e.id)) {
             matchedOrderIds.push(e.id);
@@ -1730,27 +1722,23 @@ export default function ShippingMasterApp() {
     const { isMulti, tokens, tokenSet, rawQuery } = parsedSearch;
 
     return entries.filter((e) => {
-      // 1. If Multi-Order search: Primary filter is matching the pasted tokens
+      // 1. If Multi-Order search: Match exact order numbers or tracking numbers
       if (isMulti) {
         const cleanOrder = e.order_number.toLowerCase().replace(/^#/, '');
         const cleanTrack = (e.tracking_number ?? '').toLowerCase().replace(/^#/, '');
-        const custMobile = e.customer_mobile ?? '';
-        const custName = (e.customer_name ?? '').toLowerCase();
 
-        const matched =
-          tokenSet.has(cleanOrder) ||
-          (cleanTrack && tokenSet.has(cleanTrack)) ||
-          (custMobile && tokenSet.has(custMobile)) ||
-          tokens.some(
-            (t) =>
-              cleanOrder.includes(t) ||
-              cleanTrack.includes(t) ||
-              custMobile.includes(t) ||
-              custName.includes(t)
-          );
-
+        const matched = tokenSet.has(cleanOrder) || (cleanTrack && tokenSet.has(cleanTrack));
         if (!matched) return false;
-        // Keep all explicitly searched orders visible without date or bundle filter hiding them
+
+        // Respect status tab filter if the user clicks a tab (e.g. 'pending', 'out_for_delivery', 'delivered')
+        const effectiveStatus = String(e.status || (e.shipped_at ? 'out_for_delivery' : 'pending')).toLowerCase();
+        if (statusTab !== 'all') {
+          if (statusTab === 'pending' && effectiveStatus !== 'pending') return false;
+          if (statusTab === 'out_for_delivery' && !['out_for_delivery', 'picked_up', 'dispatched', 'in_transit'].includes(effectiveStatus)) return false;
+          if (statusTab === 'delivered' && effectiveStatus !== 'delivered') return false;
+          if (statusTab === 'rto' && effectiveStatus !== 'rto' && effectiveStatus !== 'undelivered') return false;
+        }
+
         return true;
       }
 

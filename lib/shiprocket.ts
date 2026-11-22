@@ -348,10 +348,57 @@ export interface ShiprocketTrackingResult {
 }
 
 /**
- * Generate a Shiprocket manifest PDF for the given shipment IDs.
+ * Request Shiprocket pickup for given shipment IDs (automatically schedules pickup).
+ */
+export async function requestShiprocketPickup(shipmentIds: number[]): Promise<any> {
+  if (!shipmentIds || shipmentIds.length === 0) return null;
+  const token = await getShiprocketToken();
+  const res = await fetch('https://apiv2.shiprocket.in/v1/external/courier/generate/pickup', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ shipment_id: shipmentIds }),
+  });
+  const json = await res.json().catch(() => ({}));
+  console.log('[Shiprocket] Generate pickup result:', res.status, json);
+  return json;
+}
+
+/**
+ * Print already-generated Shiprocket manifest PDF for the given order IDs.
  * Returns the manifest PDF download URL.
  */
-export async function generateShiprocketManifest(shipmentIds: number[]): Promise<string> {
+export async function printShiprocketManifest(orderIds: number[]): Promise<string> {
+  if (!orderIds || orderIds.length === 0) {
+    throw new Error('No order IDs provided for printing manifest.');
+  }
+  const token = await getShiprocketToken();
+  const res = await fetch('https://apiv2.shiprocket.in/v1/external/manifests/print', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ order_ids: orderIds }),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.manifest_url) {
+    throw new Error(json.message || `Manifest print failed (HTTP ${res.status})`);
+  }
+  return json.manifest_url as string;
+}
+
+/**
+ * Generate a Shiprocket manifest PDF for the given shipment IDs.
+ * Automatically falls back to printing manifest by order IDs if already generated.
+ */
+export async function generateShiprocketManifest(
+  shipmentIds: number[],
+  orderIds?: number[]
+): Promise<string> {
   const token = await getShiprocketToken();
 
   const res = await fetch('https://apiv2.shiprocket.in/v1/external/manifests/generate', {
@@ -363,12 +410,96 @@ export async function generateShiprocketManifest(shipmentIds: number[]): Promise
     body: JSON.stringify({ shipment_id: shipmentIds }),
   });
 
-  const json = await res.json();
-  if (!res.ok || !json.manifest_url) {
-    throw new Error(json.message || `Manifest generation failed (HTTP ${res.status})`);
+  const json = await res.json().catch(() => ({}));
+  if (res.ok && json.manifest_url) {
+    return json.manifest_url as string;
   }
 
-  return json.manifest_url as string;
+  // If already manifested or orderIds available, fallback to manifests/print
+  if (orderIds && orderIds.length > 0) {
+    return await printShiprocketManifest(orderIds);
+  }
+
+  throw new Error(json.message || `Manifest generation failed (HTTP ${res.status})`);
+}
+
+export interface LiveShiprocketPickupGroup {
+  pickup_id: string;
+  courier: string;
+  shipment_count: number;
+  pickup_date?: string;
+  status: string;
+  order_ids: number[];
+  shipment_ids: number[];
+  orders: Array<{
+    order_number: string;
+    customer_name: string;
+    customer_city?: string;
+    customer_pincode?: string;
+    awb: string;
+    status: string;
+    shipping_charges?: string;
+  }>;
+}
+
+/**
+ * Fetches all live scheduled pickups directly from Shiprocket API and groups by pickup request ID & courier.
+ */
+export async function fetchShiprocketScheduledPickups(): Promise<LiveShiprocketPickupGroup[]> {
+  const token = await getShiprocketToken();
+
+  const res = await fetch(
+    'https://apiv2.shiprocket.in/v1/external/orders?status=PICKUP%20SCHEDULED&per_page=100',
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `Failed to fetch live pickups from Shiprocket (HTTP ${res.status})`);
+  }
+
+  const json = await res.json();
+  const orders = Array.isArray(json.data) ? json.data : [];
+
+  const groups: Record<string, LiveShiprocketPickupGroup> = {};
+
+  for (const o of orders) {
+    const s = o.shipments?.[0] || {};
+    const pid = s.pickup_id || 'PENDING_PICKUP_QUEUE';
+    const courier = s.courier || s.sr_courier_name || 'Courier';
+    const groupKey = `${pid}_${courier}`;
+
+    if (!groups[groupKey]) {
+      groups[groupKey] = {
+        pickup_id: pid,
+        courier,
+        shipment_count: 0,
+        pickup_date: s.pickup_scheduled_date || undefined,
+        status: o.status || 'PICKUP SCHEDULED',
+        order_ids: [],
+        shipment_ids: [],
+        orders: [],
+      };
+    }
+
+    groups[groupKey].shipment_count += 1;
+    groups[groupKey].order_ids.push(o.id);
+    if (s.id) groups[groupKey].shipment_ids.push(s.id);
+
+    groups[groupKey].orders.push({
+      order_number: String(o.channel_order_id || o.id),
+      customer_name: o.customer_name || 'Customer',
+      customer_city: o.customer_city || undefined,
+      customer_pincode: o.customer_pincode || undefined,
+      awb: s.awb || '',
+      status: o.status || '',
+      shipping_charges: s.cost || undefined,
+    });
+  }
+
+  return Object.values(groups);
 }
 
 /**

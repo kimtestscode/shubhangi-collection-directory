@@ -4,6 +4,9 @@ import { createAdminClient } from '@/lib/supabase';
 import {
   generateShiprocketLabel,
   generateShiprocketManifest,
+  printShiprocketManifest,
+  fetchShiprocketScheduledPickups,
+  requestShiprocketPickup,
 } from '@/lib/shiprocket';
 import { cropShiprocketPdfToA4, tileManifestPdfs } from '@/lib/crop-labels';
 
@@ -13,8 +16,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const supabase = createAdminClient();
     const url = new URL(req.url);
+    const action = url.searchParams.get('action') || '';
+
+    // Live Shiprocket Scheduled Pickups (direct API from Shiprocket)
+    if (action === 'get_live_pickups') {
+      const livePickups = await fetchShiprocketScheduledPickups();
+      return NextResponse.json({ live_pickups: livePickups });
+    }
+
+    const supabase = createAdminClient();
     const search = url.searchParams.get('q') || '';
     const status = url.searchParams.get('status') || '';
 
@@ -22,9 +33,9 @@ export async function GET(req: NextRequest) {
       .from('shipping_master')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(200);
+      .limit(250);
 
-    if (status) {
+    if (status && status !== 'all') {
       query = query.eq('status', status);
     }
 
@@ -56,7 +67,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { action, shipment_ids, layout = '8_on_1', raw_pdf_base64 } = body;
+    const { action, shipment_ids, order_ids, layout = '8_on_1', raw_pdf_base64 } = body;
+
+    // 0. Fetch live scheduled pickups directly from Shiprocket
+    if (action === 'get_live_pickups') {
+      const livePickups = await fetchShiprocketScheduledPickups();
+      return NextResponse.json({ success: true, live_pickups: livePickups });
+    }
 
     // 1. Process uploaded raw PDF directly (for manual label crop or manifest combining)
     if (action === 'crop_uploaded_labels') {
@@ -115,19 +132,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 3. Live API fetch for pickup manifest via Shiprocket
+    // 3. Live API fetch for pickup manifest via Shiprocket (single or multiple shipments/orders)
     if (action === 'generate_manifest') {
-      if (!Array.isArray(shipment_ids) || shipment_ids.length === 0) {
-        return NextResponse.json({ error: 'No shipment_ids provided' }, { status: 400 });
+      let manifestUrl = '';
+      if (Array.isArray(order_ids) && order_ids.length > 0) {
+        manifestUrl = await printShiprocketManifest(order_ids);
+      } else if (Array.isArray(shipment_ids) && shipment_ids.length > 0) {
+        manifestUrl = await generateShiprocketManifest(shipment_ids, order_ids);
+      } else {
+        return NextResponse.json({ error: 'No shipment_ids or order_ids provided' }, { status: 400 });
       }
 
-      const manifestUrl = await generateShiprocketManifest(shipment_ids);
       const pdfRes = await fetch(manifestUrl);
       if (!pdfRes.ok) {
         throw new Error(`Failed to download manifest PDF from Shiprocket (HTTP ${pdfRes.status})`);
       }
       const rawBuffer = Buffer.from(await pdfRes.arrayBuffer());
-      // Tile manifest so it fills page without waste
       const tiled = await tileManifestPdfs([rawBuffer]);
 
       return NextResponse.json({
@@ -135,6 +155,87 @@ export async function POST(req: NextRequest) {
         manifest_url: manifestUrl,
         pdf_base64: Buffer.from(tiled).toString('base64'),
       });
+    }
+
+    // 4. Combine ALL Live Scheduled Courier Manifests from Shiprocket into 1 Zero-Waste A4 PDF
+    if (action === 'combine_all_live_manifests') {
+      const livePickups = await fetchShiprocketScheduledPickups();
+      const validPickups = livePickups.filter(
+        (p) => p.pickup_id && p.pickup_id !== 'PENDING_PICKUP_QUEUE' && p.order_ids.length > 0
+      );
+
+      if (validPickups.length === 0) {
+        return NextResponse.json(
+          { error: 'No scheduled pickups with manifests found on Shiprocket right now.' },
+          { status: 400 }
+        );
+      }
+
+      const buffers: Buffer[] = [];
+      const manifestUrls: string[] = [];
+
+      for (const p of validPickups) {
+        try {
+          const url = await printShiprocketManifest(p.order_ids);
+          if (url) {
+            manifestUrls.push(url);
+            const res = await fetch(url);
+            if (res.ok) {
+              buffers.push(Buffer.from(await res.arrayBuffer()));
+            }
+          }
+        } catch (e) {
+          console.warn(`Could not fetch manifest for pickup ${p.pickup_id}:`, e);
+        }
+      }
+
+      if (buffers.length === 0) {
+        throw new Error('Failed to download any manifest PDFs from Shiprocket.');
+      }
+
+      const combinedTiled = await tileManifestPdfs(buffers);
+
+      return NextResponse.json({
+        success: true,
+        count: buffers.length,
+        manifest_urls: manifestUrls,
+        pdf_base64: Buffer.from(combinedTiled).toString('base64'),
+      });
+    }
+
+    // 5. Bulk Schedule Pickup for shipments directly from app
+    if (action === 'schedule_pickup') {
+      if (!Array.isArray(shipment_ids) || shipment_ids.length === 0) {
+        return NextResponse.json({ error: 'No shipment_ids provided' }, { status: 400 });
+      }
+      const pickupRes = await requestShiprocketPickup(shipment_ids);
+      return NextResponse.json({ success: true, result: pickupRes });
+    }
+
+    // 6. Sync live Shiprocket orders & AWBs with Supabase database
+    if (action === 'sync_live_shiprocket_orders') {
+      const livePickups = await fetchShiprocketScheduledPickups();
+      const supabase = createAdminClient();
+      let updatedCount = 0;
+
+      for (const group of livePickups) {
+        for (const o of group.orders) {
+          if (o.order_number && o.awb) {
+            const { error: upErr } = await supabase
+              .from('shipping_master')
+              .update({
+                status: 'picked_up',
+                tracking_number: o.awb,
+                courier_partner: 'other',
+                notes: `Shiprocket: ${group.courier}`,
+              })
+              .eq('order_number', o.order_number);
+            if (!upErr) updatedCount++;
+          }
+        }
+      }
+
+      return NextResponse.json({ success: true, updated_count: updatedCount });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });

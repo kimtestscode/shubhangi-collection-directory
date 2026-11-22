@@ -37,7 +37,31 @@ export default function PrintCenterPage() {
   const [entries, setEntries] = useState<ShippingEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('picked_up');
+  const [statusFilter, setStatusFilter] = useState<string>(''); // Default to all statuses so new orders always show!
+
+  // Live Shiprocket Pickups state
+  const [livePickups, setLivePickups] = useState<Array<{
+    pickup_id: string;
+    courier: string;
+    shipment_count: number;
+    pickup_date?: string;
+    status: string;
+    order_ids: number[];
+    shipment_ids: number[];
+    orders: Array<{
+      order_number: string;
+      customer_name: string;
+      customer_city?: string;
+      customer_pincode?: string;
+      awb: string;
+      status: string;
+      shipping_charges?: string;
+    }>;
+  }>>([]);
+  const [loadingLivePickups, setLoadingLivePickups] = useState(false);
+  const [combiningLive, setCombiningLive] = useState(false);
+  const [syncingLive, setSyncingLive] = useState(false);
+  const [downloadingGroupId, setDownloadingGroupId] = useState<string | null>(null);
 
   // Selected orders for labels or manifest
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -61,6 +85,28 @@ export default function PrintCenterPage() {
   const [singleManifestFile, setSingleManifestFile] = useState<File | null>(null);
   const [cleaningSingleManifest, setCleaningSingleManifest] = useState(false);
 
+  // Helper to trigger download of base64 PDF
+  const downloadBase64Pdf = (base64: string, filename: string) => {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'application/pdf' });
+    const blobUrl = URL.createObjectURL(blob);
+
+    setPdfPreviewUrl(blobUrl);
+    setPreviewModalOpen(true);
+
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   // Fetch entries
   const fetchEntries = async () => {
     setLoading(true);
@@ -79,9 +125,119 @@ export default function PrintCenterPage() {
     }
   };
 
+  // Fetch live pickups directly from Shiprocket API
+  const fetchLivePickups = async () => {
+    setLoadingLivePickups(true);
+    try {
+      const res = await fetch('/api/shipping/print-center?action=get_live_pickups');
+      if (res.ok) {
+        const json = await res.json();
+        setLivePickups(json.live_pickups || []);
+      }
+    } catch (e) {
+      console.error('Failed to load live Shiprocket pickups:', e);
+    } finally {
+      setLoadingLivePickups(false);
+    }
+  };
+
   useEffect(() => {
     fetchEntries();
   }, [statusFilter]);
+
+  // When switching to manifests tab, automatically load live Shiprocket pickups
+  useEffect(() => {
+    if (activeTab === 'manifests') {
+      fetchLivePickups();
+    }
+  }, [activeTab]);
+
+  // Download manifest for a single courier pickup group
+  const handleDownloadGroupManifest = async (group: any) => {
+    setDownloadingGroupId(group.pickup_id);
+    try {
+      const res = await fetch('/api/shipping/print-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_manifest',
+          order_ids: group.order_ids,
+          shipment_ids: group.shipment_ids,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.pdf_base64) {
+        throw new Error(json.error || 'Failed to generate manifest PDF');
+      }
+
+      downloadBase64Pdf(
+        json.pdf_base64,
+        `Manifest_${group.courier.replace(/[^a-zA-Z0-9]/g, '_')}_${group.pickup_id}.pdf`
+      );
+    } catch (err: any) {
+      alert(err.message || 'Error downloading manifest');
+    } finally {
+      setDownloadingGroupId(null);
+    }
+  };
+
+  // Combine ALL live courier manifests into 1 Zero-Waste A4 PDF
+  const handleCombineAllLive = async () => {
+    setCombiningLive(true);
+    try {
+      const res = await fetch('/api/shipping/print-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'combine_all_live_manifests',
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.pdf_base64) {
+        throw new Error(json.error || 'Failed to combine live manifests');
+      }
+
+      downloadBase64Pdf(
+        json.pdf_base64,
+        `Combined_All_Courier_Manifests_A4_${new Date().toISOString().slice(0, 10)}.pdf`
+      );
+    } catch (err: any) {
+      alert(err.message || 'Error combining manifests');
+    } finally {
+      setCombiningLive(false);
+    }
+  };
+
+  // Sync live Shiprocket AWBs back to Shipping Master database
+  const handleSyncLiveOrders = async () => {
+    setSyncingLive(true);
+    try {
+      const res = await fetch('/api/shipping/print-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_live_shiprocket_orders',
+        }),
+      });
+      const json = await res.json();
+      if (res.ok) {
+        alert(
+          tx(
+            `Synced ${json.updated_count || 0} orders with live AWBs and courier info!`,
+            `${json.updated_count || 0} ऑर्डर्स सिंक झाले!`
+          )
+        );
+        fetchEntries();
+        fetchLivePickups();
+      }
+    } catch (e: any) {
+      alert(e.message || 'Sync failed');
+    } finally {
+      setSyncingLive(false);
+    }
+  };
 
   // Handle enter key search
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -201,15 +357,32 @@ export default function PrintCenterPage() {
       return;
     }
 
-    const shipmentIds = selectedEntries
+    let shipmentIds = selectedEntries
       .map((e) => e.shiprocket_shipment_id)
       .filter(Boolean) as number[];
 
-    if (shipmentIds.length === 0) {
+    const orderNums = new Set(selectedEntries.map((e) => e.order_number));
+    const matchedOrderIds: number[] = [];
+    const matchedShipmentIds: number[] = [];
+
+    for (const group of livePickups) {
+      for (const ord of group.orders) {
+        if (orderNums.has(ord.order_number)) {
+          matchedOrderIds.push(...group.order_ids);
+          matchedShipmentIds.push(...group.shipment_ids);
+        }
+      }
+    }
+
+    if (shipmentIds.length === 0 && matchedShipmentIds.length > 0) {
+      shipmentIds = Array.from(new Set(matchedShipmentIds));
+    }
+
+    if (shipmentIds.length === 0 && matchedOrderIds.length === 0) {
       alert(
         tx(
-          'Selected orders do not have Shiprocket Shipment IDs. If you have raw manifest PDFs from Shiprocket dashboard, use the "Upload & Crop" tab to combine them without waste.',
-          'ऑर्डर्सचे शिपमेंट आयडी आढळले नाहीत. तुम्ही Shiprocket डॅशबोर्डवरून घेतलेल्या raw PDFs "अपलोड आणि क्रॉप" टॅबमध्ये जोडू शकता.'
+          'Could not find live Shiprocket IDs for selected orders. Please click "Reload Live Pickups" or use the live courier buttons above!',
+          'निवडलेल्या ऑर्डर्सचे शिपरोकेट आयडी सापडले नाहीत. कृपया वरील "Reload Live Pickups" बटणावर क्लिक करा!'
         )
       );
       return;
@@ -225,6 +398,7 @@ export default function PrintCenterPage() {
         body: JSON.stringify({
           action: 'generate_manifest',
           shipment_ids: shipmentIds,
+          order_ids: Array.from(new Set(matchedOrderIds)),
         }),
       });
 
@@ -233,24 +407,10 @@ export default function PrintCenterPage() {
         throw new Error(json.error || 'Failed to generate manifest PDF');
       }
 
-      const byteChars = atob(json.pdf_base64);
-      const byteNumbers = new Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) {
-        byteNumbers[i] = byteChars.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/pdf' });
-      const blobUrl = URL.createObjectURL(blob);
-
-      setPdfPreviewUrl(blobUrl);
-      setPreviewModalOpen(true);
-
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = `Shubhangi_Manifest_A4_${new Date().toISOString().slice(0, 10)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      downloadBase64Pdf(
+        json.pdf_base64,
+        `Shubhangi_Manifest_A4_${new Date().toISOString().slice(0, 10)}.pdf`
+      );
     } catch (err: any) {
       alert(err.message || 'Error generating manifest');
     } finally {
@@ -746,53 +906,205 @@ export default function PrintCenterPage() {
       {/* TAB 2: PICKUP MANIFEST GENERATOR */}
       {activeTab === 'manifests' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-3xl p-6 border border-border-warm shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          {/* SECTION 1: LIVE SHIPROCKET SCHEDULED PICKUPS (DIRECT SHIPROCKET API) */}
+          <div className="bg-white rounded-3xl p-6 border border-border-warm shadow-xs space-y-5">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h3 className="font-serif text-lg font-bold text-charcoal">
-                  {tx('Live Pickup Manifest Fetching', 'थेट पिकअप मॅनिफेस्ट जनरेशन')}
-                </h3>
-                <p className="text-xs text-charcoal-light">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <h3 className="font-serif text-lg font-bold text-charcoal">
+                    {tx('Live Scheduled Pickups & Courier Manifests', 'थेट शेड्युल झालेले पिकअप्स व मॅनिफेस्ट')}
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold">
+                    Shiprocket Live API
+                  </span>
+                </div>
+                <p className="text-xs text-charcoal-light mt-1">
                   {tx(
-                    'Once you schedule pickup on Shiprocket, select the orders below and generate an auto-tiled manifest without white space.',
-                    'Shiprocket डॅशबोर्डवर पिकअप शेड्युल केल्यावर, खालील ऑर्डर्स निवडून एका पानावर शून्य जागेत मॅनिफेस्ट तयार करा.'
+                    'Direct live pickups registered on Shiprocket. Download individual manifests per courier or combine all into 1 zero-waste A4 sheet.',
+                    'कुरिअरकडे शेड्युल झालेले थेट पिकअप्स. व्हाईटस्पेस कट करून स्वतंत्र किंवा सर्व एकत्र प्रिंट करा.'
                   )}
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleGenerateManifest}
-                disabled={generating || selectedIds.size === 0}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-charcoal text-white font-bold text-xs sm:text-sm hover:bg-charcoal/90 transition-all shadow-xs disabled:opacity-50"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-gold" />
-                <span>
-                  {generating
-                    ? progressMsg || tx('Generating…', 'तयार करत आहे…')
-                    : tx(`Generate Combined Manifest (${selectedIds.size})`, `एकत्रित मॅनिफेस्ट तयार करा (${selectedIds.size})`)}
-                </span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={fetchLivePickups}
+                  disabled={loadingLivePickups}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-border-warm bg-ivory/60 hover:bg-ivory text-charcoal font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
+                  title={tx('Reload Live Pickups from Shiprocket API', 'शिपरोकेट वरून थेट डेटा रिफ्रेश करा')}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingLivePickups ? 'animate-spin text-purple-600' : ''}`} />
+                  <span>{loadingLivePickups ? tx('Fetching…', 'शोधत आहे…') : tx('Reload Live Pickups', 'लाईव्ह पिकअप्स रिफ्रेश')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSyncLiveOrders}
+                  disabled={syncingLive}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 font-semibold text-xs transition-colors shadow-2xs cursor-pointer"
+                  title={tx('Sync live AWBs and courier info to Shipping Master table', 'शिपिंग मास्टर मध्ये AWB डेटा सिंक करा')}
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingLive ? 'animate-spin text-indigo-600' : ''}`} />
+                  <span>{syncingLive ? tx('Syncing…', 'सिंक करत आहे…') : tx('Sync to Database', 'डेटाबेस सिंक')}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCombineAllLive}
+                  disabled={combiningLive || livePickups.length === 0}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white font-bold text-xs sm:text-sm transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                  title={tx('Download all active courier manifests combined into 1 A4 PDF without waste', 'सर्व कुरिअरचे मॅनिफेस्ट एकत्र करून एका A4 पानावर झिरो वेस्ट प्रिंट करा')}
+                >
+                  {combiningLive ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                  <span>{combiningLive ? tx('Combining…', 'जोडत आहे…') : tx('Combine All Manifests (Zero-Waste A4)', 'सर्व मॅनिफेस्ट एकत्र करा (A4)')}</span>
+                </button>
+              </div>
             </div>
 
-            {/* Quick helper banner */}
-            <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 flex items-start gap-3 text-xs text-amber-900">
-              <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <span className="font-semibold">
-                  {tx('How Manifest Generation Works:', 'मॅनिफेस्ट कसे काम करते:')}
-                </span>
-                <span className="ml-1">
-                  {tx(
-                    '1. Schedule pickup in your Shiprocket dashboard as usual. 2. Select those orders here and click "Generate Combined Manifest". 3. Our system calls Shiprocket API, automatically crops the large bottom white margins, and packs 2 to 3 manifests onto standard A4 paper without wasting sheets.',
-                    '१. नेहमीप्रमाणे Shiprocket डॅशबोर्डवर पिकअप शेड्युल करा. २. त्या ऑर्डर्स येथे निवडा आणि बटण दाबा. ३. आमची सिस्टीम थेट API द्वारे मॅनिफेस्ट आणून पांढरी जागा काढून २-३ मॅनिफेस्ट एका पानावर बसवते.'
-                  )}
-                </span>
+            {/* List of Live Pickups */}
+            {loadingLivePickups && livePickups.length === 0 ? (
+              <div className="py-12 text-center text-charcoal-light space-y-2">
+                <RefreshCw className="w-6 h-6 animate-spin text-purple-600 mx-auto" />
+                <p className="text-xs font-medium">{tx('Fetching live pickups from Shiprocket API…', 'थेट शिपरोकेट वरून पिकअप्स तपासत आहे…')}</p>
               </div>
+            ) : livePickups.length === 0 ? (
+              <div className="p-6 rounded-2xl bg-ivory/50 border border-dashed border-border-warm text-center space-y-2">
+                <p className="text-xs font-semibold text-charcoal">
+                  {tx('No scheduled pickups found on Shiprocket right now.', 'सध्या शिपरोकेटवर कोणतेही शेड्युल झालेले पिकअप्स सापडले नाहीत.')}
+                </p>
+                <p className="text-[11px] text-charcoal-light max-w-md mx-auto">
+                  {tx('When you book shipments via Shipping Master, pickups are automatically requested and will appear here.', 'शिपिंग मास्टर मधून शिपमेंट बुक केल्यावर ते येथे दिसतील.')}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {livePickups.map((group) => {
+                  const isDownloading = downloadingGroupId === group.pickup_id;
+                  return (
+                    <div
+                      key={`${group.pickup_id}_${group.courier}`}
+                      className="p-4 rounded-2xl border border-border-warm bg-gradient-to-br from-white to-ivory/40 shadow-xs flex flex-col justify-between space-y-3"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-xs text-charcoal truncate" title={group.courier}>
+                            🚚 {group.courier}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold shrink-0">
+                            {group.shipment_count} {group.shipment_count === 1 ? 'AWB' : 'AWBs'}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-mono text-charcoal-light">
+                          {group.pickup_id}
+                        </div>
+                        {group.pickup_date && (
+                          <div className="text-[10px] text-charcoal-light">
+                            {tx('Pickup Date:', 'पिकअप तारीख:')} <strong className="text-charcoal">{group.pickup_date}</strong>
+                          </div>
+                        )}
+                        <div className="pt-1 flex flex-wrap gap-1 max-h-16 overflow-y-auto">
+                          {group.orders.map((ord) => (
+                            <span
+                              key={ord.order_number}
+                              className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-ivory-dark text-charcoal border border-border-warm/60"
+                              title={`${ord.customer_name} (${ord.awb})`}
+                            >
+                              #{ord.order_number}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadGroupManifest(group)}
+                        disabled={isDownloading}
+                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-charcoal hover:bg-charcoal/90 text-white font-bold text-xs transition-colors shadow-2xs disabled:opacity-50 cursor-pointer"
+                      >
+                        {isDownloading ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5 text-gold" />
+                        )}
+                        <span>{isDownloading ? tx('Downloading…', 'डाऊनलोड करत आहे…') : tx('Download Refined Manifest', 'रिफाईंड मॅनिफेस्ट डाऊनलोड')}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SECTION 2: MANUAL ORDER SELECTION & CUSTOM MANIFEST */}
+          <div className="bg-white rounded-3xl p-6 border border-border-warm shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="font-serif text-base font-bold text-charcoal">
+                  {tx('Custom Selection from Shipping Master Orders', 'शिपिंग मास्टर मधून निवडक ऑर्डर्स')}
+                </h3>
+                <p className="text-xs text-charcoal-light">
+                  {tx(
+                    'Select specific orders below if you want to generate a custom manifest directly.',
+                    'विशिष्ट ऑर्डर्स निवडून थेट कस्टम मॅनिफेस्ट काढण्यासाठी खाली निवडा.'
+                  )}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={fetchEntries}
+                  disabled={loading}
+                  className="p-2 rounded-xl border border-border-warm bg-ivory/50 hover:bg-ivory text-charcoal cursor-pointer"
+                  title={tx('Reload Orders Table', 'ऑर्डर्स रिफ्रेश करा')}
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-gold' : ''}`} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleGenerateManifest}
+                  disabled={generating || selectedIds.size === 0}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-charcoal text-white font-bold text-xs sm:text-sm hover:bg-charcoal/90 transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-gold" />
+                  <span>
+                    {generating
+                      ? progressMsg || tx('Generating…', 'तयार करत आहे…')
+                      : tx(`Generate Selected Manifest (${selectedIds.size})`, `निवडलेला मॅनिफेस्ट तयार करा (${selectedIds.size})`)}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-border-warm/60">
+              <div className="flex-1 max-w-sm relative w-full">
+                <Search className="w-4 h-4 text-charcoal-light absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={tx('Search order #, customer, AWB…', 'ऑर्डर क्र, ग्राहक किंवा ट्रॅकिंग शोधा…')}
+                  className="w-full pl-9 pr-3 py-1.5 bg-ivory/40 rounded-xl border border-border-warm text-xs focus:outline-none"
+                />
+              </div>
+
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="px-3 py-1.5 bg-ivory/40 rounded-xl border border-border-warm text-xs font-semibold text-charcoal focus:outline-none w-full sm:w-auto"
+              >
+                <option value="">{tx('All Statuses (Shows Latest)', 'सर्व स्टेटस (नवीन आधी)')}</option>
+                <option value="picked_up">{tx('Picked Up / Dispatched', 'पिकअप झालेले')}</option>
+                <option value="pending">{tx('Pending Orders', 'पेंडिंग ऑर्डर्स')}</option>
+              </select>
             </div>
           </div>
 
-          {/* Reuse the orders table for manifest selection */}
+          {/* Orders Table */}
           <div className="bg-white rounded-3xl border border-border-warm overflow-hidden shadow-xs">
             <div className="p-4 bg-ivory/40 border-b border-border-warm flex items-center justify-between text-xs">
               <label className="flex items-center gap-2 font-semibold cursor-pointer">
@@ -818,6 +1130,7 @@ export default function PrintCenterPage() {
                     <th className="py-3 px-4">{tx('City / Pin', 'शहर / पिन')}</th>
                     <th className="py-3 px-4">{tx('AWB Number', 'AWB क्रमांक')}</th>
                     <th className="py-3 px-4">{tx('Courier', 'कुरिअर')}</th>
+                    <th className="py-3 px-4">{tx('Status', 'स्थिती')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-warm/60">
@@ -847,6 +1160,17 @@ export default function PrintCenterPage() {
                       </td>
                       <td className="py-3 px-4 font-mono font-bold">{e.tracking_number || '—'}</td>
                       <td className="py-3 px-4">{e.notes || e.courier_partner || 'Shiprocket'}</td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            e.status === 'picked_up' || e.status === 'dispatched'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {e.status}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

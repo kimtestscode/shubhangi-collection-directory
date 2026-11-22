@@ -6,6 +6,7 @@ import {
   assignShiprocketAWB,
   generateShiprocketLabel,
   generateShiprocketManifest,
+  requestShiprocketPickup,
 } from '@/lib/shiprocket';
 import { cropShiprocketPdfToA4, tileManifestPdfs } from '@/lib/crop-labels';
 
@@ -116,6 +117,15 @@ export async function POST(req: NextRequest) {
           success: false,
           error: err.message || 'Failed to book shipment on Shiprocket',
         });
+      }
+    }
+
+    // 3.5 Auto-Schedule Pickup in Shiprocket (removes need to manually visit dashboard!)
+    if (shipmentIdsToLabel.length > 0) {
+      try {
+        await requestShiprocketPickup(shipmentIdsToLabel);
+      } catch (pickupErr) {
+        console.warn('Auto-schedule pickup warning:', pickupErr);
       }
     }
 

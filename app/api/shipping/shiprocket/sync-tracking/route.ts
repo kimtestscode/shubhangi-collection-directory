@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase';
 import { isAdminRequest } from '@/lib/adminAuth';
-import { trackShiprocketAWB } from '@/lib/shiprocket';
+import { trackShiprocketAWB, fetchShiprocketRecentOrdersWithAwbs } from '@/lib/shiprocket';
 
 export async function POST(req: NextRequest) {
   if (!isAdminRequest(req)) {
@@ -12,6 +12,67 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const supabase = createAdminClient();
 
+    // ─── PHASE 1: Sync Any Unlinked Pending Orders from Live Shiprocket ─────────
+    let newlyLinkedCount = 0;
+    try {
+      const liveShiprocketOrders = await fetchShiprocketRecentOrdersWithAwbs(150);
+      if (liveShiprocketOrders.length > 0) {
+        const orderNumbers = liveShiprocketOrders.map((o) => o.order_number);
+        const { data: matchedRows } = await supabase
+          .from('shipping_master')
+          .select('id, order_number, tracking_number, status')
+          .in('order_number', orderNumbers);
+
+        if (matchedRows && matchedRows.length > 0) {
+          for (const local of matchedRows) {
+            const isUnlinked =
+              !local.tracking_number ||
+              local.tracking_number.trim() === '' ||
+              local.status === 'pending';
+
+            if (isUnlinked) {
+              const sr = liveShiprocketOrders.find((o) => o.order_number === local.order_number);
+              if (sr && sr.awb) {
+                let trackingUrl = '';
+                if (/delhivery/i.test(sr.courier)) {
+                  trackingUrl = `https://www.delhivery.com/track/package/${sr.awb}`;
+                } else if (/dtdc/i.test(sr.courier)) {
+                  trackingUrl = `https://www.dtdc.in/tracking/tracking_results.asp?trCode=${sr.awb}`;
+                } else if (/xpressbees/i.test(sr.courier)) {
+                  trackingUrl = `https://www.xpressbees.com/shipment/tracking?awb=${sr.awb}`;
+                } else {
+                  trackingUrl = `https://shiprocket.co/tracking/${sr.awb}`;
+                }
+
+                let localStatus = 'picked_up';
+                const srStat = (sr.status || '').toUpperCase();
+                if (srStat.includes('DELIVERED')) localStatus = 'delivered';
+                else if (srStat.includes('OUT FOR DELIVERY')) localStatus = 'out_for_delivery';
+                else if (srStat.includes('RTO')) localStatus = 'rto';
+
+                await supabase
+                  .from('shipping_master')
+                  .update({
+                    status: localStatus,
+                    tracking_number: sr.awb,
+                    tracking_url: trackingUrl,
+                    courier_partner: 'other',
+                    notes: `Shiprocket: ${sr.courier}`,
+                    shiprocket_shipment_id: sr.shipment_id,
+                  })
+                  .eq('id', local.id);
+
+                newlyLinkedCount++;
+              }
+            }
+          }
+        }
+      }
+    } catch (phase1Err) {
+      console.warn('Phase 1 Shiprocket orders sync warning:', phase1Err);
+    }
+
+    // ─── PHASE 2: Live Tracking Updates for Active Shipments with AWBs ─────────
     let query = supabase
       .from('shipping_master')
       .select('id, order_number, tracking_number, status, notes, courier_partner')
@@ -112,6 +173,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      newly_linked_awbs: newlyLinkedCount,
       checked: shipments.length,
       updated: updatedCount,
       results,

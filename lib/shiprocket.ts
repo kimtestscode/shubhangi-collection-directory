@@ -503,6 +503,93 @@ export async function fetchShiprocketScheduledPickups(): Promise<LiveShiprocketP
 }
 
 /**
+ * Looks up an existing order in Shiprocket by channel_order_id.
+ * Returns order details and shipment/AWB info if found, or null if not found.
+ */
+export async function findShiprocketOrderByNumber(orderNumber: string): Promise<{
+  order_id: number;
+  channel_order_id: string;
+  status: string;
+  shipment_id?: number;
+  awb?: string;
+  courier?: string;
+  pickup_id?: string;
+} | null> {
+  try {
+    const token = await getShiprocketToken();
+    const cleanNo = encodeURIComponent(orderNumber.trim().replace(/^#/, ''));
+    const res = await fetch(`https://apiv2.shiprocket.in/v1/external/orders?search=${cleanNo}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) return null;
+    const json = await res.json().catch(() => ({}));
+    const list = Array.isArray(json.data) ? json.data : [];
+
+    const matched = list.find(
+      (o: any) => String(o.channel_order_id).toLowerCase().trim() === cleanNo.toLowerCase()
+    );
+
+    if (!matched) return null;
+
+    const s = matched.shipments?.[0];
+    return {
+      order_id: matched.id,
+      channel_order_id: String(matched.channel_order_id),
+      status: matched.status,
+      shipment_id: s?.id,
+      awb: s?.awb,
+      courier: s?.courier || s?.sr_courier_name,
+      pickup_id: s?.pickup_id,
+    };
+  } catch (err) {
+    console.warn(`Failed to look up Shiprocket order #${orderNumber}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Fetches recent orders from Shiprocket and extracts all that have assigned AWBs.
+ */
+export async function fetchShiprocketRecentOrdersWithAwbs(perPage = 100): Promise<Array<{
+  order_number: string;
+  awb: string;
+  courier: string;
+  status: string;
+  shipment_id?: number;
+  pickup_id?: string;
+}>> {
+  try {
+    const token = await getShiprocketToken();
+    const res = await fetch(`https://apiv2.shiprocket.in/v1/external/orders?per_page=${perPage}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return [];
+    const json = await res.json().catch(() => ({}));
+    const list = Array.isArray(json.data) ? json.data : [];
+
+    const withAwbs: any[] = [];
+    for (const o of list) {
+      const s = o.shipments?.[0];
+      if (s && s.awb && s.awb.trim().length > 0) {
+        withAwbs.push({
+          order_number: String(o.channel_order_id || o.id).trim(),
+          awb: String(s.awb).trim(),
+          courier: s.courier || s.sr_courier_name || 'Courier',
+          status: o.status || 'PICKUP SCHEDULED',
+          shipment_id: s.id,
+          pickup_id: s.pickup_id,
+        });
+      }
+    }
+    return withAwbs;
+  } catch (err) {
+    console.warn('Failed to fetch recent Shiprocket orders with AWBs:', err);
+    return [];
+  }
+}
+
+/**
  * Fetch real-time live tracking data for an AWB code from Shiprocket.
  */
 export async function trackShiprocketAWB(awbCode: string): Promise<ShiprocketTrackingResult | null> {

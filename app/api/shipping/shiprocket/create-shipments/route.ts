@@ -7,6 +7,7 @@ import {
   generateShiprocketLabel,
   generateShiprocketManifest,
   requestShiprocketPickup,
+  findShiprocketOrderByNumber,
 } from '@/lib/shiprocket';
 import { cropShiprocketPdfToA4, tileManifestPdfs } from '@/lib/crop-labels';
 
@@ -42,6 +43,74 @@ export async function POST(req: NextRequest) {
     for (const order of orders) {
       try {
         const orderNo = String(order.order_number).trim();
+
+        // 0. Double-Booking Protection:
+        // A. Check local DB first:
+        const { data: localRow } = await supabase
+          .from('shipping_master')
+          .select('id, tracking_number, status, notes, shiprocket_shipment_id')
+          .eq('order_number', orderNo)
+          .maybeSingle();
+
+        if (localRow?.tracking_number && localRow.tracking_number.trim().length > 0) {
+          const sid = localRow.shiprocket_shipment_id;
+          if (sid) shipmentIdsToLabel.push(sid);
+
+          results.push({
+            order_number: orderNo,
+            success: true,
+            already_booked: true,
+            shipment_id: sid,
+            awb_code: localRow.tracking_number,
+            courier_name: localRow.notes || 'Already Booked',
+            message: 'Order already has an AWB registered in Shipping Master. Duplicate booking skipped.',
+          });
+          continue;
+        }
+
+        // B. Check live Shiprocket API before booking:
+        const existingSr = await findShiprocketOrderByNumber(orderNo);
+        if (existingSr && existingSr.awb && existingSr.awb.trim().length > 0) {
+          const courierName = existingSr.courier || 'Shiprocket Courier';
+          let trackingUrl = '';
+          if (/delhivery/i.test(courierName)) {
+            trackingUrl = `https://www.delhivery.com/track/package/${existingSr.awb}`;
+          } else if (/dtdc/i.test(courierName)) {
+            trackingUrl = `https://www.dtdc.in/tracking/tracking_results.asp?trCode=${existingSr.awb}`;
+          } else if (/xpressbees/i.test(courierName)) {
+            trackingUrl = `https://www.xpressbees.com/shipment/tracking?awb=${existingSr.awb}`;
+          } else {
+            trackingUrl = `https://shiprocket.co/tracking/${existingSr.awb}`;
+          }
+
+          await supabase
+            .from('shipping_master')
+            .update({
+              status: 'picked_up',
+              courier_partner: 'other',
+              tracking_number: existingSr.awb,
+              tracking_url: trackingUrl,
+              notes: `Shiprocket: ${courierName}`,
+              shiprocket_shipment_id: existingSr.shipment_id,
+            })
+            .eq('order_number', orderNo);
+
+          if (existingSr.shipment_id) {
+            shipmentIdsToLabel.push(existingSr.shipment_id);
+          }
+
+          results.push({
+            order_number: orderNo,
+            success: true,
+            already_booked: true,
+            shipment_id: existingSr.shipment_id,
+            awb_code: existingSr.awb,
+            courier_name: courierName,
+            tracking_url: trackingUrl,
+            message: 'Existing Shiprocket booking detected. Synced and duplicate charge prevented.',
+          });
+          continue;
+        }
 
         const numDeclared = typeof order.declared_value === 'number'
           ? order.declared_value

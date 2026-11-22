@@ -624,12 +624,45 @@ export default function ShippingMasterApp() {
     const selectedEntries = entries.filter((e) => selectedIds.includes(e.id));
     if (selectedEntries.length === 0) return;
 
+    // Filter out already booked/shipped orders to prevent duplicate booking & duplicate charges
+    const alreadyBooked = selectedEntries.filter(
+      (e) =>
+        (e.tracking_number && e.tracking_number.trim().length > 0) ||
+        ['picked_up', 'out_for_delivery', 'in_transit', 'delivered'].includes(e.status)
+    );
+    const unbookedEntries = selectedEntries.filter(
+      (e) =>
+        !(
+          (e.tracking_number && e.tracking_number.trim().length > 0) ||
+          ['picked_up', 'out_for_delivery', 'in_transit', 'delivered'].includes(e.status)
+        )
+    );
+
+    if (unbookedEntries.length === 0) {
+      alert(
+        tx(
+          `All selected ${selectedEntries.length} order(s) already have AWBs / tracking numbers registered! Duplicate booking prevented.`,
+          `निवडलेल्या सर्व ${selectedEntries.length} ऑर्डर्स आधीच बुक झाल्या आहेत! पुन्हा बुकिंग करण्याची गरज नाही.`
+        )
+      );
+      return;
+    }
+
+    if (alreadyBooked.length > 0) {
+      alert(
+        tx(
+          `Note: ${alreadyBooked.length} already booked order(s) (e.g. #${alreadyBooked[0].order_number}) were automatically excluded to prevent duplicate booking. Proceeding with remaining ${unbookedEntries.length} order(s).`,
+          `सूचना: आधीच बुक झालेल्या ${alreadyBooked.length} ऑर्डर्स वगळल्या आहेत. उर्वरित ${unbookedEntries.length} ऑर्डर्स बुक करत आहोत.`
+        )
+      );
+    }
+
     setSrDispatchOpen(true);
     setSrCheckingRates(true);
     setSrSuccessData(null);
     setSrWalletBalance(null);
 
-    const initialOrders = selectedEntries.map((e) => {
+    const initialOrders = unbookedEntries.map((e) => {
       const cleanPin = (e.customer_pincode || '').replace(/\D/g, '').slice(-6);
       const pkg = getOrderPackageSpecs(e);
       const parsedAmt = getOrderAmount(e);
@@ -892,12 +925,14 @@ export default function ShippingMasterApp() {
 
       await loadEntries();
       beep(880, 100);
+      const newlyLinked = data.newly_linked_awbs || 0;
+      const statusUpdated = data.updated || 0;
       setFeedback({
         kind: 'success',
-        order: `${data.checked} parcels checked`,
+        order: `${newlyLinked} new AWBs synced, ${data.checked || 0} parcels tracked`,
         note: tx(
-          `Shiprocket Sync Complete: ${data.checked} parcels checked, ${data.updated} status/milestone updates recorded.`,
-          `शिपरॉकेट सिंक पूर्ण: ${data.checked} पार्सल तपासले, ${data.updated} नवीन स्टेटस अपडेट झाले.`
+          `Shiprocket Sync Complete: ${newlyLinked} orders linked with live Shiprocket AWBs, and ${statusUpdated} milestone updates recorded.`,
+          `शिपरॉकेट सिंक पूर्ण: ${newlyLinked} ऑर्डर्सचे AWB सिंक झाले, आणि ${statusUpdated} डिलिव्हरी अपडेट झाले.`
         ),
       });
     } catch (err: any) {

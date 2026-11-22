@@ -157,16 +157,22 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 4. Combine ALL Live Scheduled Courier Manifests from Shiprocket into 1 Zero-Waste A4 PDF
-    if (action === 'combine_all_live_manifests') {
-      const livePickups = await fetchShiprocketScheduledPickups();
-      const validPickups = livePickups.filter(
-        (p) => p.pickup_id && p.pickup_id !== 'PENDING_PICKUP_QUEUE' && p.order_ids.length > 0
-      );
+    // 4. Combine Live Scheduled Courier Manifests from Shiprocket into 1 Zero-Waste A4 PDF
+    if (action === 'combine_all_live_manifests' || action === 'combine_selected_manifests') {
+      let groupsToCombine: any[] = [];
 
-      if (validPickups.length === 0) {
+      if (Array.isArray(body.selected_groups) && body.selected_groups.length > 0) {
+        groupsToCombine = body.selected_groups;
+      } else {
+        const livePickups = await fetchShiprocketScheduledPickups();
+        groupsToCombine = livePickups.filter(
+          (p) => p.order_ids && p.order_ids.length > 0
+        );
+      }
+
+      if (groupsToCombine.length === 0) {
         return NextResponse.json(
-          { error: 'No scheduled pickups with manifests found on Shiprocket right now.' },
+          { error: 'No scheduled pickups with manifests found to combine.' },
           { status: 400 }
         );
       }
@@ -174,9 +180,21 @@ export async function POST(req: NextRequest) {
       const buffers: Buffer[] = [];
       const manifestUrls: string[] = [];
 
-      for (const p of validPickups) {
+      for (const p of groupsToCombine) {
         try {
-          const url = await printShiprocketManifest(p.order_ids);
+          let url = '';
+          if (Array.isArray(p.order_ids) && p.order_ids.length > 0) {
+            try {
+              url = await printShiprocketManifest(p.order_ids);
+            } catch (errPrint) {
+              if (Array.isArray(p.shipment_ids) && p.shipment_ids.length > 0) {
+                url = await generateShiprocketManifest(p.shipment_ids, p.order_ids);
+              }
+            }
+          } else if (Array.isArray(p.shipment_ids) && p.shipment_ids.length > 0) {
+            url = await generateShiprocketManifest(p.shipment_ids);
+          }
+
           if (url) {
             manifestUrls.push(url);
             const res = await fetch(url);
@@ -185,12 +203,12 @@ export async function POST(req: NextRequest) {
             }
           }
         } catch (e) {
-          console.warn(`Could not fetch manifest for pickup ${p.pickup_id}:`, e);
+          console.warn(`Could not fetch manifest for pickup ${p.pickup_id || p.courier}:`, e);
         }
       }
 
       if (buffers.length === 0) {
-        throw new Error('Failed to download any manifest PDFs from Shiprocket.');
+        throw new Error('Failed to download any manifest PDFs from Shiprocket. Please check if pickup manifests are available.');
       }
 
       const combinedTiled = await tileManifestPdfs(buffers);

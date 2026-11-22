@@ -20,7 +20,8 @@ import {
   Truck,
   Eye,
   X,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Calendar
 } from 'lucide-react';
 import { useLanguage } from '@/lib/languageContext';
 import { ShippingEntry } from '@/lib/shipping';
@@ -62,6 +63,10 @@ export default function PrintCenterPage() {
   const [combiningLive, setCombiningLive] = useState(false);
   const [syncingLive, setSyncingLive] = useState(false);
   const [downloadingGroupId, setDownloadingGroupId] = useState<string | null>(null);
+
+  // Live Pickups selection & date filtering
+  const [selectedPickupKeys, setSelectedPickupKeys] = useState<Set<string>>(new Set());
+  const [pickupDateFilter, setPickupDateFilter] = useState<string>('all');
 
   // Selected orders for labels or manifest
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -182,26 +187,106 @@ export default function PrintCenterPage() {
     }
   };
 
-  // Combine ALL live courier manifests into 1 Zero-Waste A4 PDF
-  const handleCombineAllLive = async () => {
+  // Group keys helper for live pickups
+  const getGroupKey = (g: { pickup_id: string; courier: string }) => `${g.pickup_id}_${g.courier}`;
+
+  // Extract distinct pickup dates sorted descending (latest date first)
+  const availablePickupDates = useMemo(() => {
+    const datesMap = new Map<string, { count: number; parcels: number }>();
+    for (const g of livePickups) {
+      const d = g.pickup_date ? g.pickup_date.split(' ')[0].trim() : 'Unscheduled';
+      const curr = datesMap.get(d) || { count: 0, parcels: 0 };
+      datesMap.set(d, {
+        count: curr.count + 1,
+        parcels: curr.parcels + g.shipment_count,
+      });
+    }
+    return Array.from(datesMap.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [livePickups]);
+
+  // Filtered live pickups based on date filter
+  const filteredLivePickups = useMemo(() => {
+    if (pickupDateFilter === 'all') return livePickups;
+    return livePickups.filter((g) => {
+      const d = g.pickup_date ? g.pickup_date.split(' ')[0].trim() : 'Unscheduled';
+      return d === pickupDateFilter;
+    });
+  }, [livePickups, pickupDateFilter]);
+
+  // Total AWBs across filtered live pickups
+  const filteredAWBCount = useMemo(() => {
+    return filteredLivePickups.reduce((acc, g) => acc + g.shipment_count, 0);
+  }, [filteredLivePickups]);
+
+  // Toggle selection for a single live pickup card
+  const handleTogglePickupSelect = (groupKey: string) => {
+    setSelectedPickupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  };
+
+  // Toggle select all filtered live pickup cards
+  const handleToggleSelectAllLivePickups = () => {
+    const allFilteredKeys = filteredLivePickups.map(getGroupKey);
+    const areAllSelected =
+      allFilteredKeys.length > 0 &&
+      allFilteredKeys.every((k) => selectedPickupKeys.has(k));
+
+    if (areAllSelected) {
+      // Deselect all filtered
+      setSelectedPickupKeys((prev) => {
+        const next = new Set(prev);
+        allFilteredKeys.forEach((k) => next.delete(k));
+        return next;
+      });
+    } else {
+      // Select all filtered
+      setSelectedPickupKeys((prev) => {
+        const next = new Set(prev);
+        allFilteredKeys.forEach((k) => next.add(k));
+        return next;
+      });
+    }
+  };
+
+  // Combine selected (or all filtered) live courier manifests into 1 Zero-Waste A4 PDF
+  const handleCombineLiveManifests = async () => {
+    const groupsToCombine =
+      selectedPickupKeys.size > 0
+        ? livePickups.filter((g) => selectedPickupKeys.has(getGroupKey(g)))
+        : filteredLivePickups;
+
+    if (groupsToCombine.length === 0) {
+      alert(tx('Please select at least one courier manifest to combine.', 'कृपया एकत्र करण्यासाठी किमान एक मॅनिफेस्ट निवडा.'));
+      return;
+    }
+
     setCombiningLive(true);
     try {
       const res = await fetch('/api/shipping/print-center', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'combine_all_live_manifests',
+          action: 'combine_selected_manifests',
+          selected_groups: groupsToCombine,
         }),
       });
 
       const json = await res.json();
       if (!res.ok || !json.pdf_base64) {
-        throw new Error(json.error || 'Failed to combine live manifests');
+        throw new Error(json.error || 'Failed to combine manifests');
       }
 
+      const dateSuffix = pickupDateFilter !== 'all' ? `_${pickupDateFilter}` : '';
       downloadBase64Pdf(
         json.pdf_base64,
-        `Combined_All_Courier_Manifests_A4_${new Date().toISOString().slice(0, 10)}.pdf`
+        `Combined_Manifests_${groupsToCombine.length}_Couriers${dateSuffix}.pdf`
       );
     } catch (err: any) {
       alert(err.message || 'Error combining manifests');
@@ -949,16 +1034,106 @@ export default function PrintCenterPage() {
                   <RefreshCw className={`w-3.5 h-3.5 ${syncingLive ? 'animate-spin text-indigo-600' : ''}`} />
                   <span>{syncingLive ? tx('Syncing…', 'सिंक करत आहे…') : tx('Sync to Database', 'डेटाबेस सिंक')}</span>
                 </button>
+              </div>
+            </div>
+
+            {/* Filter & Multi-Select Action Bar */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 bg-ivory/50 rounded-2xl border border-border-warm">
+              {/* Left: Date Filter */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-charcoal flex items-center gap-1.5 shrink-0">
+                  <Calendar className="w-4 h-4 text-purple-700" />
+                  {tx('Filter Date:', 'तारखेनुसार फिल्टर:')}
+                </span>
+
+                <select
+                  value={pickupDateFilter}
+                  onChange={(e) => setPickupDateFilter(e.target.value)}
+                  className="text-xs font-semibold rounded-xl border border-border-warm bg-white py-1.5 px-3 text-charcoal focus:ring-purple-500 focus:border-purple-500 cursor-pointer shadow-2xs"
+                >
+                  <option value="all">
+                    {tx(`All Dates (${livePickups.length} manifests · ${livePickups.reduce((a, b) => a + b.shipment_count, 0)} AWBs)`, `सर्व तारखा (${livePickups.length} मॅनिफेस्ट)`)}
+                  </option>
+                  {availablePickupDates.map(([d, info]) => (
+                    <option key={d} value={d}>
+                      📅 {d} ({info.count} {info.count === 1 ? 'manifest' : 'manifests'} · {info.parcels} AWBs)
+                    </option>
+                  ))}
+                </select>
+
+                {/* Quick Date Pills */}
+                {availablePickupDates.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setPickupDateFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                        pickupDateFilter === 'all'
+                          ? 'bg-purple-700 text-white shadow-2xs'
+                          : 'bg-white text-charcoal border border-border-warm hover:bg-ivory'
+                      }`}
+                    >
+                      {tx('All', 'सर्व')}
+                    </button>
+                    {availablePickupDates.map(([d, info]) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setPickupDateFilter(d)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                          pickupDateFilter === d
+                            ? 'bg-purple-700 text-white shadow-2xs'
+                            : 'bg-white text-charcoal border border-border-warm hover:bg-ivory'
+                        }`}
+                      >
+                        {d} ({info.count})
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Multi-select counter & Combine button */}
+              <div className="flex items-center gap-2.5 flex-wrap justify-between lg:justify-end">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-charcoal select-none bg-white px-3 py-1.5 rounded-xl border border-border-warm shadow-2xs">
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredLivePickups.length > 0 &&
+                      filteredLivePickups.every((g) => selectedPickupKeys.has(getGroupKey(g)))
+                    }
+                    onChange={handleToggleSelectAllLivePickups}
+                    className="w-4 h-4 rounded border-border-warm text-purple-600 focus:ring-purple-500 cursor-pointer"
+                  />
+                  <span>
+                    {selectedPickupKeys.size > 0
+                      ? tx(`Selected ${selectedPickupKeys.size} of ${filteredLivePickups.length}`, `${filteredLivePickups.length} पैकी ${selectedPickupKeys.size} निवडले`)
+                      : tx(`Select All (${filteredLivePickups.length})`, `सर्व निवडा (${filteredLivePickups.length})`)}
+                  </span>
+                </label>
 
                 <button
                   type="button"
-                  onClick={handleCombineAllLive}
-                  disabled={combiningLive || livePickups.length === 0}
-                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white font-bold text-xs sm:text-sm transition-all shadow-xs disabled:opacity-50 cursor-pointer"
-                  title={tx('Download all active courier manifests combined into 1 A4 PDF without waste', 'सर्व कुरिअरचे मॅनिफेस्ट एकत्र करून एका A4 पानावर झिरो वेस्ट प्रिंट करा')}
+                  onClick={handleCombineLiveManifests}
+                  disabled={combiningLive || filteredLivePickups.length === 0}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-white font-bold text-xs sm:text-sm transition-all shadow-xs disabled:opacity-50 cursor-pointer"
+                  title={tx(
+                    'Fetch and crop blank spaces from selected manifests, tiling 2-3 per A4 sheet',
+                    'निवडलेल्या मॅनिफेस्ट मधील पांढरी जागा कापून A4 पानात एकत्र बसवा'
+                  )}
                 >
-                  {combiningLive ? <RefreshCw className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
-                  <span>{combiningLive ? tx('Combining…', 'जोडत आहे…') : tx('Combine All Manifests (Zero-Waste A4)', 'सर्व मॅनिफेस्ट एकत्र करा (A4)')}</span>
+                  {combiningLive ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-gold" />
+                  ) : (
+                    <FileSpreadsheet className="w-4 h-4 text-gold" />
+                  )}
+                  <span>
+                    {combiningLive
+                      ? tx('Combining & Trimming White Spaces…', 'मॅनिफेस्ट जोडून जागा कापत आहे…')
+                      : selectedPickupKeys.size > 0
+                      ? tx(`⚡ Combine Selected (${selectedPickupKeys.size}) Refined A4`, `⚡ निवडलेले (${selectedPickupKeys.size}) एकत्र करा (A4)`)
+                      : tx(`⚡ Combine All (${filteredLivePickups.length}) Refined A4`, `⚡ सर्व (${filteredLivePickups.length}) एकत्र करा (A4)`)}
+                  </span>
                 </button>
               </div>
             </div>
@@ -978,32 +1153,72 @@ export default function PrintCenterPage() {
                   {tx('When you book shipments via Shipping Master, pickups are automatically requested and will appear here.', 'शिपिंग मास्टर मधून शिपमेंट बुक केल्यावर ते येथे दिसतील.')}
                 </p>
               </div>
+            ) : filteredLivePickups.length === 0 ? (
+              <div className="p-6 rounded-2xl bg-ivory/50 border border-dashed border-border-warm text-center space-y-2">
+                <p className="text-xs font-semibold text-charcoal">
+                  {tx(`No scheduled pickups found for date: ${pickupDateFilter}`, `या तारखेसाठी कोणतेही पिकअप्स सापडले नाहीत: ${pickupDateFilter}`)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPickupDateFilter('all')}
+                  className="px-3 py-1.5 text-xs font-bold rounded-xl bg-purple-700 text-white cursor-pointer hover:bg-purple-600"
+                >
+                  {tx('Show All Dates', 'सर्व तारखा दाखवा')}
+                </button>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                {livePickups.map((group) => {
+                {filteredLivePickups.map((group) => {
+                  const groupKey = getGroupKey(group);
+                  const isSelected = selectedPickupKeys.has(groupKey);
                   const isDownloading = downloadingGroupId === group.pickup_id;
                   return (
                     <div
-                      key={`${group.pickup_id}_${group.courier}`}
-                      className="p-4 rounded-2xl border border-border-warm bg-gradient-to-br from-white to-ivory/40 shadow-xs flex flex-col justify-between space-y-3"
+                      key={groupKey}
+                      onClick={() => handleTogglePickupSelect(groupKey)}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-xs flex flex-col justify-between space-y-3 ${
+                        isSelected
+                          ? 'border-purple-600 bg-purple-50/40 ring-2 ring-purple-500/40 shadow-sm'
+                          : 'border-border-warm bg-gradient-to-br from-white to-ivory/40 hover:border-purple-300'
+                      }`}
                     >
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-xs text-charcoal truncate" title={group.courier}>
-                            🚚 {group.courier}
-                          </span>
+                          <div className="flex items-center gap-2 truncate">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleTogglePickupSelect(groupKey);
+                              }}
+                              className="w-4 h-4 rounded border-border-warm text-purple-600 focus:ring-purple-500 cursor-pointer"
+                            />
+                            <span className="font-bold text-xs text-charcoal truncate" title={group.courier}>
+                              🚚 {group.courier}
+                            </span>
+                          </div>
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold shrink-0">
                             {group.shipment_count} {group.shipment_count === 1 ? 'AWB' : 'AWBs'}
                           </span>
                         </div>
-                        <div className="text-[11px] font-mono text-charcoal-light">
-                          {group.pickup_id}
+
+                        <div className="text-[11px] font-mono text-charcoal-light flex items-center justify-between">
+                          <span>{group.pickup_id}</span>
+                          {isSelected && (
+                            <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                              ✓ {tx('Selected', 'निवडले')}
+                            </span>
+                          )}
                         </div>
+
                         {group.pickup_date && (
-                          <div className="text-[10px] text-charcoal-light">
-                            {tx('Pickup Date:', 'पिकअप तारीख:')} <strong className="text-charcoal">{group.pickup_date}</strong>
+                          <div className="text-[10px] text-charcoal-light flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-purple-600 shrink-0" />
+                            <span>{tx('Pickup Date:', 'पिकअप तारीख:')} <strong className="text-charcoal font-mono">{group.pickup_date}</strong></span>
                           </div>
                         )}
+
                         <div className="pt-1 flex flex-wrap gap-1 max-h-16 overflow-y-auto">
                           {group.orders.map((ord) => (
                             <span
@@ -1019,7 +1234,10 @@ export default function PrintCenterPage() {
 
                       <button
                         type="button"
-                        onClick={() => handleDownloadGroupManifest(group)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadGroupManifest(group);
+                        }}
                         disabled={isDownloading}
                         className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-charcoal hover:bg-charcoal/90 text-white font-bold text-xs transition-colors shadow-2xs disabled:opacity-50 cursor-pointer"
                       >

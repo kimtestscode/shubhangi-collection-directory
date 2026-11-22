@@ -476,8 +476,10 @@ export function formatPackageNoteTag(specs: PackageSpecs): string {
 
 export function parseOrderAmount(notes?: string | null): number | null {
   if (!notes) return null;
-  const match = notes.match(/\[amt:(\d+(?:\.\d+)?)\]/i);
-  return match ? Number(match[1]) : null;
+  const match = notes.match(/\[amt:([\d,]+(?:\.\d+)?)\]/i);
+  if (!match) return null;
+  const cleanNum = parseFloat(match[1].replace(/,/g, ''));
+  return !isNaN(cleanNum) && cleanNum > 0 ? cleanNum : null;
 }
 
 export function setNoteTag(existingNotes: string | null | undefined, tagKey: string, value: string): string {

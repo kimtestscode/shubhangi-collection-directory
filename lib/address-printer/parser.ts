@@ -205,13 +205,16 @@ function parseOrderBlock(raw: string): Order {
     // Skip WhatsApp chat timestamps / date headers inside a block
     if (isChatNoise(line)) continue;
 
-    // Detect Order Amount (e.g. *Total amount= 530*, Amount: 530, etc.)
+    // Detect Order Amount (e.g. *Total amount= 530*, Amount: 530, Amount -1,800, etc.)
     // Checked early so it is never dumped into address or from lines
     const amtMatch = line.match(
-      /^(?:total\s*amount|total\s*amt|order\s*amount|order\s*value|amount|amt|total)\b[\s\-:=.]*(?:rs\.?|inr|₹)?\s*(\d+(?:\.\d+)?)/i
+      /^[-•\s]*(?:total\s*amount|total\s*amt|order\s*amount|order\s*value|amount|amt|total)\b[\s\-:=.]*(?:rs\.?|inr|₹)?\s*([\d,]+(?:\.\d+)?)/i
     );
     if (amtMatch) {
-      orderAmount = Number(amtMatch[1]);
+      const cleanAmt = parseFloat(amtMatch[1].replace(/,/g, ''));
+      if (!isNaN(cleanAmt) && cleanAmt > 0) {
+        orderAmount = cleanAmt;
+      }
       continue;
     }
 

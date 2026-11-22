@@ -116,7 +116,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   if (typeof body.order_amount !== 'undefined' || typeof body.amount !== 'undefined') {
     const rawVal = body.order_amount ?? body.amount;
-    const num = typeof rawVal === 'number' ? rawVal : parseFloat(rawVal);
+    const num =
+      typeof rawVal === 'number'
+        ? rawVal
+        : parseFloat(String(rawVal || '').replace(/,/g, '').trim());
     if (!isNaN(num) && num > 0) {
       let currentNotes =
         typeof updates.notes === 'string'

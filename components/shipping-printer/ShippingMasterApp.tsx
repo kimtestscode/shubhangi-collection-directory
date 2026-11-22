@@ -1392,7 +1392,9 @@ export default function ShippingMasterApp() {
           customer_address: finalAddress || null,
           customer_landmark: editCustomerLandmark.trim() || null,
           customer_pincode: editCustomerPincode.trim() || null,
-          order_amount: editOrderAmount ? Number(editOrderAmount) : null,
+          order_amount: editOrderAmount
+            ? parseFloat(String(editOrderAmount).replace(/,/g, '').trim())
+            : null,
         }),
       });
 
@@ -1403,7 +1405,10 @@ export default function ShippingMasterApp() {
       if (editingEntry) {
         updateOrderPackage(editingEntry.order_number, editPackageSpecs);
         if (editOrderAmount) {
-          updateOrderAmount(editingEntry.order_number, Number(editOrderAmount));
+          const parsed = parseFloat(String(editOrderAmount).replace(/,/g, '').trim());
+          if (!isNaN(parsed) && parsed > 0) {
+            updateOrderAmount(editingEntry.order_number, parsed);
+          }
         }
       }
       setEditingEntry(null);

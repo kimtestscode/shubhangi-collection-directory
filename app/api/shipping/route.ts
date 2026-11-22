@@ -67,12 +67,16 @@ export async function POST(req: NextRequest) {
 
       const customerCity = to.city?.trim() || to.district?.trim() || rawOrder.customer_city?.trim() || null;
       const customerPincode = to.pincode?.trim() || rawOrder.customer_pincode?.trim() || null;
-      const orderAmount =
-        typeof rawOrder.amount === 'number' && rawOrder.amount > 0
-          ? rawOrder.amount
-          : typeof rawOrder.order_amount === 'number' && rawOrder.order_amount > 0
-          ? rawOrder.order_amount
-          : null;
+      const rawAmt = rawOrder.amount ?? rawOrder.order_amount;
+      let orderAmount: number | null = null;
+      if (typeof rawAmt === 'number' && rawAmt > 0) {
+        orderAmount = rawAmt;
+      } else if (typeof rawAmt === 'string' && rawAmt.trim().length > 0) {
+        const cleanAmt = parseFloat(rawAmt.replace(/,/g, '').trim());
+        if (!isNaN(cleanAmt) && cleanAmt > 0) {
+          orderAmount = cleanAmt;
+        }
+      }
 
       // Check existing entry
       const { data: existing } = await supabase

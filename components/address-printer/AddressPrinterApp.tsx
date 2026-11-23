@@ -41,6 +41,36 @@ export default function AddressPrinterApp() {
     }
   }
 
+  async function handleSyncSingleOrder(order: Order, previousOrderNumber?: string) {
+    setSyncing(true);
+    setSyncNotice('');
+    try {
+      const payloadOrder = {
+        ...order,
+        previousOrderNumber:
+          previousOrderNumber && previousOrderNumber !== order.orderNumber
+            ? previousOrderNumber
+            : undefined,
+      };
+      const res = await fetch('/api/shipping', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sync_orders', orders: [payloadOrder] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyncNotice(`✓ Order #${order.orderNumber} updated in Shipping Master`);
+      } else {
+        setSyncNotice(`Note: Saved locally; recording returned: ${data.error || res.statusText}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to sync order to shipping master:', err);
+      setSyncNotice('Note: Could not reach Shipping Master service');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   function handleGenerate() {
     if (!rawInput.trim()) return;
     const result = parseWhatsAppBatch(rawInput);
@@ -84,6 +114,8 @@ export default function AddressPrinterApp() {
         onBack={() => setScreen('input')}
         syncNotice={syncNotice}
         syncing={syncing}
+        onSyncAll={() => syncOrdersToMaster(orders)}
+        onSaveOrder={handleSyncSingleOrder}
       />
     );
   }

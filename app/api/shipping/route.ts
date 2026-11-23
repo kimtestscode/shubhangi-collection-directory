@@ -41,6 +41,10 @@ export async function POST(req: NextRequest) {
       const orderNo = normalizeOrderNumber(String(rawOrder.orderNumber || rawOrder.order_number || ''));
       if (!orderNo) continue;
 
+      const previousOrderNo = rawOrder.previousOrderNumber || rawOrder.previous_order_number
+        ? normalizeOrderNumber(String(rawOrder.previousOrderNumber || rawOrder.previous_order_number))
+        : null;
+
       const to = rawOrder.to || {};
       const customerName = to.name?.trim() || rawOrder.customer_name?.trim() || null;
       const customerMobile = to.mobile?.trim() || rawOrder.customer_mobile?.trim() || null;
@@ -66,7 +70,10 @@ export async function POST(req: NextRequest) {
       }
 
       const customerCity = to.city?.trim() || to.district?.trim() || rawOrder.customer_city?.trim() || null;
-      const customerPincode = to.pincode?.trim() || rawOrder.customer_pincode?.trim() || null;
+      const rawPin = String(to.pincode || rawOrder.customer_pincode || '').trim();
+      const cleanPin = rawPin.replace(/\D/g, '').slice(-6);
+      const customerPincode = cleanPin || rawPin || null;
+
       const rawAmt = rawOrder.amount ?? rawOrder.order_amount;
       let orderAmount: number | null = null;
       if (typeof rawAmt === 'number' && rawAmt > 0) {
@@ -78,18 +85,36 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Check existing entry
-      const { data: existing } = await supabase
-        .from('shipping_master')
-        .select('*')
-        .eq('order_number', orderNo)
-        .maybeSingle();
+      // Check existing entry - either by previousOrderNo (if renamed) or current orderNo
+      let existing: any = null;
+      if (previousOrderNo && previousOrderNo !== orderNo) {
+        const { data: prevExisting } = await supabase
+          .from('shipping_master')
+          .select('*')
+          .eq('order_number', previousOrderNo)
+          .maybeSingle();
+        if (prevExisting) {
+          existing = prevExisting;
+        }
+      }
+
+      if (!existing) {
+        const { data: currentExisting } = await supabase
+          .from('shipping_master')
+          .select('*')
+          .eq('order_number', orderNo)
+          .maybeSingle();
+        existing = currentExisting;
+      }
 
       if (existing) {
         // Update customer details and refresh printed_at for this print session
         const updates: Record<string, unknown> = {
           printed_at: nowIso,
         };
+        if (previousOrderNo && previousOrderNo !== orderNo) {
+          updates.order_number = orderNo;
+        }
         if (customerName) updates.customer_name = customerName;
         if (customerMobile) updates.customer_mobile = customerMobile;
         if (customerAddress) updates.customer_address = customerAddress;

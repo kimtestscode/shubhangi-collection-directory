@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { Order } from '@/lib/address-printer/order';
 import {
   ArrowLeft, Printer, Trash2, ArrowUp, ArrowDown, Edit3, Check, X,
-  AlertTriangle, AlertCircle, CheckCircle2, Filter, AlertOctagon, Loader2
+  AlertTriangle, AlertCircle, CheckCircle2, Filter, AlertOctagon, Loader2, RefreshCw
 } from 'lucide-react';
 
 interface Props {
@@ -16,6 +16,8 @@ interface Props {
   onBack: () => void;
   syncNotice?: string;
   syncing?: boolean;
+  onSyncAll?: () => Promise<void> | void;
+  onSaveOrder?: (order: Order, previousOrderNumber?: string) => Promise<void> | void;
 }
 
 interface EditingState {
@@ -29,6 +31,7 @@ interface EditingState {
   state: string;
   pincode: string;
   mobile: string;
+  amount: string;
   fromRaw: string;
 }
 
@@ -39,11 +42,12 @@ function orderToEditing(o: Order): EditingState {
     name: o.to.name,
     address: o.to.address,
     landmark: o.to.landmark ?? '',
-    district: o.to.district ?? '',
-    city: o.to.city ?? '',
+    district: o.to.district || o.to.city || '',
+    city: o.to.city || o.to.district || '',
     state: o.to.state ?? '',
     pincode: o.to.pincode ?? '',
     mobile: o.to.mobile ?? '',
+    amount: o.amount !== undefined && o.amount !== null ? String(o.amount) : '',
     fromRaw: o.from.rawBlock,
   };
 }
@@ -66,17 +70,26 @@ function applyEditing(o: Order, e: EditingState): Order {
   }
   if (!e.fromRaw.trim()) warnings.push('From / reseller information missing');
 
+  let parsedAmt = o.amount;
+  if (e.amount && e.amount.trim().length > 0) {
+    const num = parseFloat(e.amount.replace(/,/g, '').trim());
+    if (!isNaN(num) && num > 0) {
+      parsedAmt = num;
+    }
+  }
+
   return {
     ...o,
     orderNumber: e.orderNumber.trim(),
+    amount: parsedAmt,
     warnings,
     to: {
       ...o.to,
       name: e.name.trim(),
       address: e.address.trim(),
       landmark: e.landmark.trim() || undefined,
-      district: e.district.trim() || undefined,
-      city: e.city.trim() || undefined,
+      district: e.district.trim() || e.city.trim() || undefined,
+      city: e.city.trim() || e.district.trim() || undefined,
       state: e.state.trim() || undefined,
       pincode: e.pincode.trim() || undefined,
       mobile: e.mobile.trim() || undefined,
@@ -97,9 +110,13 @@ export default function ReviewScreen({
   onBack,
   syncNotice,
   syncing,
+  onSyncAll,
+  onSaveOrder,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditingState | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [syncedOrderMap, setSyncedOrderMap] = useState<Record<string, boolean>>({});
   const [filterMode, setFilterMode] = useState<'all' | 'flagged'>('all');
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
 
@@ -133,14 +150,30 @@ export default function ReviewScreen({
     setEditState(orderToEditing(o));
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     if (!editState) return;
+    const currentEdit = editState;
+    const originalOrder = orders.find((o) => o.id === currentEdit.id);
+    const updatedOrder = applyEditing(originalOrder || orders[0], currentEdit);
+    const prevOrderNo = originalOrder?.orderNumber;
+
     const updated = orders.map((o) =>
-      o.id === editState.id ? applyEditing(o, editState) : o
+      o.id === currentEdit.id ? updatedOrder : o
     );
     onOrdersChange(updated);
     setEditingId(null);
     setEditState(null);
+
+    // Immediately sync to Shipping Master database so Shiprocket booking has updated details
+    if (onSaveOrder) {
+      setSavingId(updatedOrder.id);
+      try {
+        await onSaveOrder(updatedOrder, prevOrderNo);
+        setSyncedOrderMap((prev) => ({ ...prev, [updatedOrder.id]: true }));
+      } finally {
+        setSavingId(null);
+      }
+    }
   }
 
   function cancelEdit() {
@@ -166,18 +199,23 @@ export default function ReviewScreen({
     onOrdersChange(updated);
   }
 
-  function handleReassignOrderNumber(orderId: string, newNumber: string) {
+  async function handleReassignOrderNumber(orderId: string, newNumber: string) {
     const cleanNum = newNumber.replace(/\D/g, '').trim();
     if (!cleanNum) {
       alert('Please enter a valid numeric order number.');
       return;
     }
+    const targetOrder = orders.find((o) => o.id === orderId);
+    const prevOrderNo = targetOrder?.orderNumber;
+
+    let updatedOrder: Order | null = null;
     const updated = orders.map((o) => {
       if (o.id !== orderId) return o;
-      return {
+      updatedOrder = {
         ...o,
         orderNumber: cleanNum,
       };
+      return updatedOrder;
     });
     onOrdersChange(updated);
     setReassignInputs((prev) => {
@@ -185,6 +223,16 @@ export default function ReviewScreen({
       delete next[orderId];
       return next;
     });
+
+    if (onSaveOrder && updatedOrder) {
+      setSavingId(orderId);
+      try {
+        await onSaveOrder(updatedOrder, prevOrderNo);
+        setSyncedOrderMap((prev) => ({ ...prev, [orderId]: true }));
+      } finally {
+        setSavingId(null);
+      }
+    }
   }
 
   function handleProceed() {
@@ -223,22 +271,32 @@ export default function ReviewScreen({
           multiline ? (
             <textarea
               className="w-full text-sm border border-gold/40 rounded-lg px-2.5 py-1.5 bg-white text-charcoal focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30 resize-y min-h-[60px]"
-              value={editState ? String(editState[field]) : ''}
-              onChange={(e) =>
-                setEditState((prev) =>
-                  prev ? { ...prev, [field]: e.target.value } : prev
-                )
-              }
+              value={editState ? String(editState[field] ?? '') : ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                setEditState((prev) => {
+                  if (!prev) return prev;
+                  if (field === 'district' || field === 'city') {
+                    return { ...prev, district: val, city: val };
+                  }
+                  return { ...prev, [field]: val };
+                });
+              }}
             />
           ) : (
             <input
               className="w-full text-sm border border-gold/40 rounded-lg px-2.5 py-1 bg-white text-charcoal focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold/30"
-              value={editState ? String(editState[field]) : ''}
-              onChange={(e) =>
-                setEditState((prev) =>
-                  prev ? { ...prev, [field]: e.target.value } : prev
-                )
-              }
+              value={editState ? String(editState[field] ?? '') : ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                setEditState((prev) => {
+                  if (!prev) return prev;
+                  if (field === 'district' || field === 'city') {
+                    return { ...prev, district: val, city: val };
+                  }
+                  return { ...prev, [field]: val };
+                });
+              }}
             />
           )
         ) : (
@@ -283,6 +341,18 @@ export default function ReviewScreen({
           </div>
 
           <div className="flex items-center gap-2">
+            {onSyncAll && (
+              <button
+                onClick={onSyncAll}
+                disabled={orders.length === 0 || syncing}
+                title="Sync all parsed orders to Shipping Master database"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs sm:text-sm rounded-xl border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors font-medium cursor-pointer disabled:opacity-50"
+              >
+                {syncing ? <Loader2 className="w-4 h-4 animate-spin text-emerald-700" /> : <RefreshCw className="w-4 h-4 text-emerald-700" />}
+                <span className="hidden sm:inline">Sync to Master</span>
+              </button>
+            )}
+
             <button
               onClick={onBack}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm rounded-xl border border-border-warm text-charcoal hover:bg-ivory-dark transition-colors font-medium cursor-pointer"
@@ -498,7 +568,7 @@ export default function ReviewScreen({
                         }
                       />
                     ) : (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-bold text-sm text-charcoal font-mono tracking-tight">
                           ORDER #{order.orderNumber}
                         </span>
@@ -507,6 +577,17 @@ export default function ReviewScreen({
                             Duplicate!
                           </span>
                         )}
+                        {savingId === order.id ? (
+                          <span className="text-[10px] text-gold font-semibold flex items-center gap-1 bg-gold/10 px-1.5 py-0.5 rounded">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            Syncing...
+                          </span>
+                        ) : syncedOrderMap[order.id] ? (
+                          <span className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                            <Check className="w-2.5 h-2.5" />
+                            Synced to Master
+                          </span>
+                        ) : null}
                       </div>
                     )}
                   </div>
@@ -581,6 +662,9 @@ export default function ReviewScreen({
                       <Field label="Pincode" value={order.to.pincode ?? ''} field="pincode" />
                       <Field label="Mobile" value={order.to.mobile ?? ''} field="mobile" />
                     </div>
+                    <div className="mt-2">
+                      <Field label="Order Amount (₹)" value={order.amount ? `₹${order.amount}` : ''} field="amount" />
+                    </div>
                   </div>
 
                   {/* Sender / From */}
@@ -598,6 +682,7 @@ export default function ReviewScreen({
                     <>
                       <button
                         onClick={cancelEdit}
+                        disabled={savingId === order.id}
                         className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-xl border border-border-warm text-charcoal-light hover:bg-white transition-colors"
                       >
                         <X className="w-3.5 h-3.5" />
@@ -605,10 +690,15 @@ export default function ReviewScreen({
                       </button>
                       <button
                         onClick={saveEdit}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-xl bg-gold text-white hover:bg-gold/90 transition-colors font-medium shadow-xs"
+                        disabled={savingId === order.id}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs rounded-xl bg-gold text-white hover:bg-gold/90 transition-colors font-medium shadow-xs disabled:opacity-50"
                       >
-                        <Check className="w-3.5 h-3.5" />
-                        Save Changes
+                        {savingId === order.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5" />
+                        )}
+                        <span>Save &amp; Sync to Master</span>
                       </button>
                     </>
                   ) : (

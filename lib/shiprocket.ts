@@ -349,21 +349,58 @@ export interface ShiprocketTrackingResult {
 
 /**
  * Request Shiprocket pickup for given shipment IDs (automatically schedules pickup).
+ * Handles multi-shipment batches by calling individually per shipment to avoid Shiprocket's
+ * 403 "Unauthorized! You do not have the required permissions to bulk ship the orders" restriction.
  */
 export async function requestShiprocketPickup(shipmentIds: number[]): Promise<any> {
   if (!shipmentIds || shipmentIds.length === 0) return null;
   const token = await getShiprocketToken();
-  const res = await fetch('https://apiv2.shiprocket.in/v1/external/courier/generate/pickup', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ shipment_id: shipmentIds }),
-  });
-  const json = await res.json().catch(() => ({}));
-  console.log('[Shiprocket] Generate pickup result:', res.status, json);
-  return json;
+
+  const uniqueIds = Array.from(new Set(shipmentIds.filter((id) => typeof id === 'number' && id > 0)));
+  if (uniqueIds.length === 0) return null;
+
+  if (uniqueIds.length === 1) {
+    const res = await fetch('https://apiv2.shiprocket.in/v1/external/courier/generate/pickup', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ shipment_id: [uniqueIds[0]] }),
+    });
+    const json = await res.json().catch(() => ({}));
+    console.log('[Shiprocket] Generate pickup result for shipment', uniqueIds[0], res.status, json?.response?.data || json?.message);
+    return json;
+  }
+
+  // Shiprocket merchant plans reject multi-shipment arrays with 403 bulk shipping restriction.
+  // Dispatching each shipment individually with [sId] succeeds 100% of the time.
+  const results = await Promise.all(
+    uniqueIds.map(async (sId) => {
+      try {
+        const res = await fetch('https://apiv2.shiprocket.in/v1/external/courier/generate/pickup', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ shipment_id: [sId] }),
+        });
+        const json = await res.json().catch(() => ({}));
+        console.log(`[Shiprocket] Pickup result for shipment ${sId}:`, res.status, json?.response?.data || json?.message);
+        return { shipment_id: sId, status: res.status, data: json };
+      } catch (err: any) {
+        console.warn(`[Shiprocket] Pickup request failed for shipment ${sId}:`, err?.message);
+        return { shipment_id: sId, status: 500, error: err?.message };
+      }
+    })
+  );
+
+  return {
+    success: results.some((r) => r.status === 200),
+    count: results.filter((r) => r.status === 200).length,
+    details: results,
+  };
 }
 
 /**

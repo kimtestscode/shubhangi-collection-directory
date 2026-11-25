@@ -66,7 +66,10 @@ const FIELD_PATTERNS: [FieldKey, RegExp][] = [
   ['district', /^(?:tal\s*district|taluka|district|tehsil|tal)\b[\s\-:.]*/i],
   ['city', /^(?:city|town|village)\b[\s\-:.]*/i],
   ['state', /^(?:state)\b[\s\-:.]*/i],
-  ['pincode', /^(?:correct\s*pincode|pincode|pin\s*code|pin)\b[\s\-:.]*/i],
+  [
+    'pincode',
+    /^(?:correct\s*pin\s*code|correct\s*pincode|pin\s*code\s*no\.?|pincode\s*no\.?|pin\s*no\.?|pincode\s*number|pin\s*number|postal\s*code|zip\s*code|pincode|pin\s*code|pin)\b[\s\-:.=]*/i,
+  ],
   ['mobile', /^(?:mobile\s*no|mobaile\s*no|mob\s*no|phone\s*no|contact\s*no|mobile|mobaile|mob|ph|phone|contact)\b[\s\-:.]*/i],
   ['from', /^from\s*[,]?\s*$/i],
 ];
@@ -81,27 +84,53 @@ function detectField(line: string): FieldKey | null {
 
 /**
  * Extract value after the label separator.
- * Handles: "Name - Rupali", "Name: Rupali", "Name.. Rupali", "Pincode 415639", "mobaile no 9324576392", "Tal district ... ratnagiri"
+ * Handles: "Name - Rupali", "Name: Rupali", "Name.. Rupali", "Pincode 415639", "Pincode no.-410206.", "Pin no.410206"
  */
 function extractValue(line: string): string {
   const stripped = clean(line);
   return stripped
     .replace(
-      /^(?:customer\s*name|cust\s*name|name|full\s*address|address|add|landmark|nearby|near|tal\s*district|taluka|district|tehsil|tal|city|town|village|state|correct\s*pincode|pincode|pin\s*code|pin|mobile\s*no|mobaile\s*no|mob\s*no|phone\s*no|contact\s*no|mobile|mobaile|mob|ph|phone|contact)\b[\s\-:.]*/i,
+      /^(?:customer\s*name|cust\s*name|name|full\s*address|address|add|landmark|nearby|near|tal\s*district|taluka|district|tehsil|tal|city|town|village|state|correct\s*pin\s*code|correct\s*pincode|pin\s*code\s*no\.?|pincode\s*no\.?|pin\s*no\.?|pincode\s*number|pin\s*number|postal\s*code|zip\s*code|pincode|pin\s*code|pin|mobile\s*no|mobaile\s*no|mob\s*no|phone\s*no|contact\s*no|mobile|mobaile|mob|ph|phone|contact)\b[\s\-:.=]*/i,
       ''
     )
     .trim();
 }
 
 /**
- * Normalize pincode: remove spaces, warn if not 6 digits.
+ * Normalize pincode: extract valid 6-digit Indian pincode (even with spaces like "400 075" or trailing punctuation like "410206."), warn if not 6 digits.
  */
 function normalizePincode(raw: string): { value: string; warn?: string } {
-  const digits = raw.replace(/\s+/g, '');
-  if (!/^\d{6}$/.test(digits)) {
-    return { value: digits || raw, warn: 'Pincode does not look like a valid 6-digit Indian pincode' };
+  const match = raw.match(/(?<!\d)([1-9]\d{2}\s*\d{3})(?!\d)/);
+  if (match) {
+    const digits = match[1].replace(/\s+/g, '');
+    if (/^[1-9]\d{5}$/.test(digits)) {
+      return { value: digits };
+    }
   }
-  return { value: digits };
+  const digitsOnly = raw.replace(/\D/g, '');
+  if (/^[1-9]\d{5}$/.test(digitsOnly)) {
+    return { value: digitsOnly };
+  }
+  const cleaned = raw.replace(/\s+/g, '');
+  return {
+    value: cleaned || raw,
+    warn: 'Pincode does not look like a valid 6-digit Indian pincode',
+  };
+}
+
+/**
+ * Fallback: extract a 6-digit Indian pincode embedded inside address text
+ * (e.g. "Mumbai 400 075 Mob no 9821517253" or "Maharashtra 410206").
+ * Strips phone numbers first so 10-digit mobile numbers are never mistaken for pincodes.
+ */
+function extractEmbeddedPincode(text: string): string | undefined {
+  if (!text) return undefined;
+  // Remove 10-digit (or +91) phone numbers, including spaced 5+5 or 3+3+4 variants
+  const withoutPhones = text.replace(/(?:\+?91[\s\-]?)?[6-9]\d{2}[\s\-]?\d{2,3}[\s\-]?\d{4,5}/g, ' ');
+  const matches = [...withoutPhones.matchAll(/(?<!\d)([1-9]\d{2}\s?\d{3})(?!\d)/g)];
+  if (matches.length === 0) return undefined;
+  // Prefer the last 6-digit match in the address (Indian pincodes appear at the end)
+  return matches[matches.length - 1][1].replace(/\s+/g, '');
 }
 
 // ─── timestamp / chat-noise patterns to skip everywhere ─────────────────────
@@ -319,6 +348,16 @@ function parseOrderBlock(raw: string): Order {
       } else if (fl && !from.address) {
         from.address = fl;
       }
+    }
+  }
+
+  // Fallback: extract embedded 6-digit pincode from address/location lines if no explicit Pincode label matched
+  if (!to.pincode) {
+    const embeddedPin = extractEmbeddedPincode(
+      [to.address, to.city, to.district, to.state, to.landmark].filter(Boolean).join(' ')
+    );
+    if (embeddedPin) {
+      to.pincode = embeddedPin;
     }
   }
 
